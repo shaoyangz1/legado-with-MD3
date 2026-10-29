@@ -47,6 +47,7 @@ class RetainedCoverImageTest {
     private lateinit var loader: ImageLoader
     private val path = mutableStateOf("entry")
     private val width = mutableStateOf(240)
+    private val requestRevision = mutableStateOf(0)
     private val requests = CopyOnWriteArrayList<String>()
     private val requestSizes = CopyOnWriteArrayList<Size>()
     private val response = CompletableDeferred<Image>()
@@ -160,11 +161,92 @@ class RetainedCoverImageTest {
         assertEquals(Color.Blue, pixel())
     }
 
+    @Test
+    fun sameImageRequestChangeDoesNotSnapAnActiveTransitionToTheEnd() {
+        show()
+        compose.runOnIdle { path.value = "detail" }
+        compose.waitForIdle()
+        compose.waitUntil(timeoutMillis = 5000) { requests.isNotEmpty() }
+        compose.mainClock.autoAdvance = false
+        response.complete(ColorImage(android.graphics.Color.BLUE, 20, 20))
+        compose.waitUntil { successes.get() >= 2 }
+        compose.mainClock.advanceTimeBy(80)
+        val before = pixel()
+        assertTrue(before.red > 0f && before.blue > 0f)
+        compose.runOnIdle { requestRevision.value++ }
+        compose.mainClock.advanceTimeByFrame()
+        val after = pixel()
+        assertTrue("a request update must not finish the fade abruptly", after.red > 0f)
+        assertEquals(0f, after.green, 0.01f)
+        compose.mainClock.autoAdvance = true
+        compose.waitForIdle()
+        assertEquals(Color.Blue, pixel())
+        assertEquals(listOf("detail"), requests.toList())
+    }
+
+    @Test
+    fun backdropFadeIsStillInProgressAtTwoHundredMilliseconds() {
+        show(backdrop = true)
+        compose.runOnIdle { path.value = "detail" }
+        compose.waitForIdle()
+        compose.waitUntil { requests.isNotEmpty() }
+        compose.mainClock.autoAdvance = false
+        response.complete(ColorImage(android.graphics.Color.BLUE, 20, 20))
+        compose.waitUntil { successes.get() >= 2 }
+        compose.mainClock.advanceTimeBy(240)
+        val halfway = pixel()
+        assertTrue(halfway.red > 0f && halfway.blue > 0f)
+        assertEquals(0f, halfway.green, 0.01f)
+        compose.mainClock.autoAdvance = true
+        compose.waitForIdle()
+        assertEquals(Color.Blue, pixel())
+    }
+
+    @Test
+    fun backdropWithoutEntryCacheFadesInInsteadOfAppearingInOneFrame() {
+        loader.memoryCache?.clear()
+        show(backdrop = true)
+        compose.waitForIdle()
+        compose.waitUntil { requests.isNotEmpty() }
+        compose.mainClock.autoAdvance = false
+        response.complete(ColorImage(android.graphics.Color.BLUE, 20, 20))
+        compose.waitUntil { successes.get() > 0 }
+        compose.mainClock.advanceTimeBy(160)
+        val firstFrames = pixel()
+        assertTrue(firstFrames.blue > 0f && firstFrames.blue < 1f)
+        compose.mainClock.autoAdvance = true
+        compose.waitForIdle()
+        assertEquals(Color.Blue, pixel())
+    }
+
+    @Test
+    fun nextCoverArrivingMidFadeDoesNotFlashTheUnfinishedTarget() {
+        show(backdrop = true)
+        compose.runOnIdle { path.value = "detail" }
+        compose.waitForIdle()
+        compose.waitUntil { requests.isNotEmpty() }
+        compose.mainClock.autoAdvance = false
+        response.complete(ColorImage(android.graphics.Color.BLUE, 20, 20))
+        compose.waitUntil { successes.get() >= 2 }
+        compose.mainClock.advanceTimeBy(160)
+        val before = pixel()
+        assertTrue(before.red > 0f && before.blue > 0f)
+        cache("next#book-info-backdrop", android.graphics.Color.GREEN)
+        compose.runOnIdle { path.value = "next" }
+        compose.mainClock.advanceTimeBy(32)
+        val after = pixel()
+        assertTrue("new result must not abruptly remove the original cover", after.red > 0f)
+        compose.mainClock.autoAdvance = true
+        compose.waitForIdle()
+        assertEquals(Color.Green, pixel())
+    }
+
     private fun show(backdrop: Boolean = false) {
         compose.setContent {
             RetainedCoverImage(
                 request = ImageRequest.Builder(RuntimeEnvironment.getApplication())
                     .data(path.value)
+                    .diskCacheKey("test-revision-${requestRevision.value}")
                     .memoryCacheKey(if (backdrop) "${path.value}#book-info-backdrop" else path.value)
                     .apply { if (backdrop) size(384, 384) }.build(),
                 imageLoader = loader,
@@ -173,6 +255,8 @@ class RetainedCoverImageTest {
                 modifier = Modifier.size(width.value.dp).background(if (backdrop) Color.Black else Color.White).testTag("cover"),
                 onSuccess = { successes.incrementAndGet() },
                 onError = { errors.incrementAndGet() },
+                transitionDurationMillis = if (backdrop) 600 else 200,
+                fadeInFirstImage = backdrop,
             )
         }
     }

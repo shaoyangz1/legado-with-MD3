@@ -134,6 +134,8 @@ fun BookCoverImage(
     onImageSize: ((Int, Int) -> Unit)? = null,
     placeholderCoverPath: String? = null,
     placeholderCoverMemoryKey: String? = null,
+    transitionDurationMillis: Int = 200,
+    fadeInFirstImage: Boolean = false,
 ) {
     val context = LocalContext.current
     val isNight = LegadoTheme.isDark
@@ -266,6 +268,8 @@ fun BookCoverImage(
                         contentScale = contentScale,
                         onSuccess = onLoaded,
                         onError = onFailed,
+                        transitionDurationMillis = transitionDurationMillis,
+                        fadeInFirstImage = fadeInFirstImage,
                     )
                 }
             } else {

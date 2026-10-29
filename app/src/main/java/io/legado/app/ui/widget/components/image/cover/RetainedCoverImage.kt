@@ -12,6 +12,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
@@ -23,6 +24,7 @@ import coil3.memory.MemoryCache
 import coil3.request.ImageRequest
 import coil3.request.SuccessResult
 import coil3.request.crossfade
+import kotlinx.coroutines.flow.filterNotNull
 
 /**
  * 详情页持有入口已解码的图及其 URL。同 URL 不重新执行请求，也不因详情尺寸更大重采样。
@@ -39,6 +41,8 @@ internal fun RetainedCoverImage(
     contentScale: ContentScale = ContentScale.Fit,
     onSuccess: (coil3.Image) -> Unit = {},
     onError: () -> Unit = {},
+    transitionDurationMillis: Int = 200,
+    fadeInFirstImage: Boolean = false,
 ) {
     val context = LocalContext.current
     val sizeResolver = rememberConstraintsSizeResolver()
@@ -53,15 +57,37 @@ internal fun RetainedCoverImage(
     val currentOnSuccess by rememberUpdatedState(onSuccess)
     val currentOnError by rememberUpdatedState(onError)
 
+    var readyImage by remember(imageLoader, entryPath, entryMemoryCacheKey) {
+        mutableStateOf<Pair<String, coil3.Image>?>(null)
+    }
+    val currentDuration by rememberUpdatedState(transitionDurationMillis)
+    val currentFadeFirst by rememberUpdatedState(fadeInFirstImage)
+
+    // 连续换图时完成当前混合，再过渡到最新已加载图片；不能把半透明的新图突然变成底图。
+    // collect 串行执行动画，snapshotFlow 在等待期间合并更新，不堆积中间封面。
+    LaunchedEffect(imageLoader, entryPath, entryMemoryCacheKey) {
+        snapshotFlow { readyImage }.filterNotNull().collect { next ->
+            if (displayed == next) return@collect
+            previous = displayed?.second
+            opacity.snapTo(if (previous == null && !currentFadeFirst) 1f else 0f)
+            displayed = next
+            opacity.animateTo(1f, tween(currentDuration))
+            previous = null
+        }
+    }
+
     LaunchedEffect(request, imageLoader, entryPath, entryMemoryCacheKey) {
-        // 快速连续换图时，先完成上一张图的显示，再等待新的请求。
-        opacity.snapTo(1f)
-        previous = null
         val path = request.data as String
         displayed?.takeIf { it.first == path }?.let {
+            readyImage = it
             currentOnSuccess(it.second)
             return@LaunchedEffect
         }
+        readyImage?.takeIf { it.first == path }?.let {
+            currentOnSuccess(it.second)
+            return@LaunchedEffect
+        }
+        readyImage = null
         val cached = request.memoryCacheKey?.let {
             imageLoader.memoryCache?.get(MemoryCache.Key(it))?.image
         }
@@ -74,12 +100,8 @@ internal fun RetainedCoverImage(
             if (displayed == null) currentOnError()
             return@LaunchedEffect
         }
-        previous = displayed?.second
-        opacity.snapTo(if (previous == null) 1f else 0f)
-        displayed = path to image
+        readyImage = path to image
         currentOnSuccess(image)
-        opacity.animateTo(1f, tween(200))
-        previous = null
     }
 
     Box(modifier.then(sizeResolver)) {

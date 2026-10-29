@@ -979,6 +979,8 @@ private fun BookInfoBackdrop(
                 memoryCacheKey = book.coverPath?.let { "$it#book-info-backdrop" },
                 placeholderCoverPath = if (usesDefaultCover) null else initialCoverPath,
                 placeholderCoverMemoryKey = coverMemoryCacheKey(entrySharedCoverKey, null, initialCoverPath),
+                transitionDurationMillis = 600,
+                fadeInFirstImage = true,
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(480.dp)
