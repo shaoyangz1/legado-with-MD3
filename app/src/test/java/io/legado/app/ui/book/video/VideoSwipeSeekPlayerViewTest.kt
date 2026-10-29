@@ -3,6 +3,7 @@ package io.legado.app.ui.book.video
 import android.app.Activity
 import android.app.Application
 import android.os.Looper
+import android.os.SystemClock
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
@@ -26,6 +27,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.LooperMode
+import java.time.Duration
 
 @RunWith(RobolectricTestRunner::class)
 @Config(application = Application::class, sdk = [35])
@@ -66,6 +68,68 @@ class VideoSwipeSeekPlayerViewTest {
     fun longPressOnPictureWorksWithControllerHidden() {
         view.hideController()
         swipe()
+    }
+
+    @Test
+    fun holdingPictureActivatesNativeBarBeforeFingerMoves() {
+        view.hideController()
+        val down = SystemClock.uptimeMillis()
+        MotionEvent.obtain(down, down, MotionEvent.ACTION_DOWN, 250f, 150f, 0).let {
+            view.dispatchTouchEvent(it)
+            it.recycle()
+        }
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(700))
+        assertNotNull("holding alone must show the scrub preview", preview)
+        assertTrue(view.isControllerFullyVisible)
+        MotionEvent.obtain(down, SystemClock.uptimeMillis(), MotionEvent.ACTION_UP, 250f, 150f, 0).let {
+            view.dispatchTouchEvent(it)
+            it.recycle()
+        }
+        assertTrue("releasing without movement must not seek", (view.player as SeekablePlayer).seekRequests.isEmpty())
+    }
+
+    @Test
+    fun holdDuringLoadingActivatesWhenDurationArrives() {
+        val current = SeekablePlayer(seekable = false, seekCommand = false,
+            durationUs = C.TIME_UNSET, playbackState = Player.STATE_BUFFERING)
+        view.player = current
+        view.hideController()
+        val down = SystemClock.uptimeMillis()
+        fun event(action: Int, x: Float) {
+            MotionEvent.obtain(down, SystemClock.uptimeMillis(), action, x, 150f, 0).let {
+                view.dispatchTouchEvent(it)
+                it.recycle()
+            }
+        }
+        event(MotionEvent.ACTION_DOWN, 100f)
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(700))
+        assertEquals(null, preview)
+        current.finishLoading()
+        shadowOf(Looper.getMainLooper()).idle()
+        assertNotNull("pending hold should resume once duration is known", preview)
+        event(MotionEvent.ACTION_MOVE, 180f)
+        val target = preview!!.positionMs
+        event(MotionEvent.ACTION_UP, 180f)
+        assertEquals(listOf(target), current.seekRequests)
+    }
+
+    @Test
+    fun releasedLoadingHoldDoesNotActivateLater() {
+        val current = SeekablePlayer(seekable = false, seekCommand = false,
+            durationUs = C.TIME_UNSET, playbackState = Player.STATE_BUFFERING)
+        view.player = current
+        view.hideController()
+        val down = SystemClock.uptimeMillis()
+        for (action in listOf(MotionEvent.ACTION_DOWN, MotionEvent.ACTION_UP)) {
+            MotionEvent.obtain(down, down, action, 100f, 150f, 0).let {
+                view.dispatchTouchEvent(it)
+                it.recycle()
+            }
+        }
+        current.finishLoading()
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(700))
+        assertEquals(null, preview)
+        assertTrue(current.seekRequests.isEmpty())
     }
 
     @Test
@@ -182,13 +246,20 @@ class VideoSwipeSeekPlayerViewTest {
     internal class SeekablePlayer(
         private var seekable: Boolean = true,
         private var seekCommand: Boolean = true,
-        private val durationUs: Long = 300_000_000,
+        private var durationUs: Long = 300_000_000,
         private val positionMs: Long = 60_000,
+        private var playbackState: Int = Player.STATE_READY,
     ) : SimpleBasePlayer(Looper.getMainLooper()) {
         val seekRequests = mutableListOf<Long>()
         override fun handleSeek(mediaItemIndex: Int, positionMs: Long, seekCommand: Int): ListenableFuture<*> {
             seekRequests += positionMs
             return Futures.immediateVoidFuture()
+        }
+
+        fun finishLoading() {
+            durationUs = 300_000_000
+            playbackState = Player.STATE_READY
+            changeCapabilities(seekable = true, seekCommand = true)
         }
 
         fun changeCapabilities(seekable: Boolean, seekCommand: Boolean) {
@@ -205,7 +276,7 @@ class VideoSwipeSeekPlayerViewTest {
             .setPlaylist(listOf(MediaItemData.Builder("video")
                 .setMediaItem(MediaItem.fromUri("https://example.test/video.mp4"))
                 .setIsSeekable(seekable).setDurationUs(durationUs).build()))
-            .setPlaybackState(Player.STATE_READY)
+            .setPlaybackState(playbackState)
             .setContentPositionMs(positionMs)
             .build()
     }

@@ -49,6 +49,9 @@ internal class VideoSwipeSeekGesture(
         tracking = true
     }
 
+    fun previewIfLongPressed(timeMs: Long): VideoSeekPreview? =
+        if (tracking && timeMs - downTimeMs >= longPressTimeoutMs) VideoSeekPreview(target, duration) else null
+
     fun move(x: Float, y: Float, timeMs: Long): VideoSeekPreview? {
         if (!tracking) return null
         val dx = x - startX
@@ -96,6 +99,17 @@ internal class VideoSwipeSeekPlayerView(context: Context) : PlayerView(context) 
     private var gestureMediaItem: MediaItem? = null
     private var gestureMediaIndex = -1
     private val refreshFallbackButtons = Runnable { updateFallbackSeekButtons() }
+    private var pendingDown: MotionEvent? = null
+    private var awaitingSeekInfo = false
+    private var pendingEdge = 0f
+    private val activateLongPress = Runnable {
+        if (sameMedia()) {
+            val now = SystemClock.uptimeMillis()
+            gesture.previewIfLongPressed(now)?.let { startNativeScrub(it, now) }
+        } else {
+            cancelSwipe()
+        }
+    }
 
     init {
         timeBar.addListener(object : TimeBar.OnScrubListener {
@@ -115,7 +129,9 @@ internal class VideoSwipeSeekPlayerView(context: Context) : PlayerView(context) 
 
     private val seekCapabilityListener = object : Player.Listener {
         override fun onEvents(player: Player, events: Player.Events) {
-            if (ownsTouch && !sameMedia()) cancelSwipe()
+            if (gestureMediaItem != null && !sameMediaIdentity()) cancelSwipe()
+            if (awaitingSeekInfo) armPendingGesture()
+            else if (ownsTouch && !sameMedia()) cancelSwipe()
             updateFallbackSeekButtons()
         }
     }
@@ -167,33 +183,34 @@ internal class VideoSwipeSeekPlayerView(context: Context) : PlayerView(context) 
             MotionEvent.ACTION_DOWN -> {
                 cancelSwipe()
                 val current = player
-                if (current != null && canSeek(current) && !hitsControl(this, event.rawX, event.rawY)) {
+                if (current?.currentMediaItem != null && !current.isPlayingAd && !hitsControl(this, event.rawX, event.rawY)) {
                     gestureMediaItem = current.currentMediaItem
                     gestureMediaIndex = current.currentMediaItemIndex
                     val insets = ViewCompat.getRootWindowInsets(this)
                         ?.getInsets(WindowInsetsCompat.Type.systemGestures())
                     val edge = maxOf(24f * resources.displayMetrics.density,
                         (insets?.left ?: 0).toFloat(), (insets?.right ?: 0).toFloat())
-                    gesture.begin(event.x, event.y, width.toFloat(), current.currentPosition, current.duration, edge, event.eventTime)
+                    if (width > 0 && event.x >= edge && event.x <= width - edge) {
+                        pendingDown = MotionEvent.obtain(event)
+                        pendingEdge = edge
+                        awaitingSeekInfo = true
+                        armPendingGesture()
+                    }
                 }
             }
             MotionEvent.ACTION_MOVE -> {
-                if (gestureMediaItem != null && (!sameMedia() || event.pointerCount != 1)) {
+                if (awaitingSeekInfo) {
+                    val down = pendingDown
+                    if (!sameMediaIdentity() || event.pointerCount != 1 || down == null ||
+                        maxOf(abs(event.x - down.x), abs(event.y - down.y)) > ViewConfiguration.get(context).scaledTouchSlop) {
+                        cancelSwipe()
+                    }
+                } else if (gestureMediaItem != null && (!sameMedia() || event.pointerCount != 1)) {
                     cancelSwipe()
                 } else {
                     gesture.move(event.x, event.y, event.eventTime)?.let { preview ->
                         if (!ownsTouch) {
-                            ownsTouch = true
-                            val cancel = MotionEvent.obtain(event).apply { action = MotionEvent.ACTION_CANCEL }
-                            super.dispatchTouchEvent(cancel)
-                            cancel.recycle()
-                            parent?.requestDisallowInterceptTouchEvent(true)
-                            savedControllerTimeout = controllerShowTimeoutMs
-                            controllerShowTimeoutMs = 0
-                            showController()
-                            barDownTime = event.eventTime
-                            barX = scrubX(preview)
-                            sendBarTouch(MotionEvent.ACTION_DOWN, event.eventTime)
+                            startNativeScrub(preview, event.eventTime)
                         } else {
                             barX = scrubX(preview)
                             sendBarTouch(MotionEvent.ACTION_MOVE, event.eventTime)
@@ -217,6 +234,35 @@ internal class VideoSwipeSeekPlayerView(context: Context) : PlayerView(context) 
             }
         }
         return ownsTouch || super.dispatchTouchEvent(event)
+    }
+
+    private fun armPendingGesture() {
+        val down = pendingDown ?: return
+        val current = player ?: return
+        if (!canSeek(current)) return
+        awaitingSeekInfo = false
+        gesture.begin(down.x, down.y, width.toFloat(), current.currentPosition, current.duration, pendingEdge, down.eventTime)
+        val remaining = down.eventTime + ViewConfiguration.getLongPressTimeout() - SystemClock.uptimeMillis()
+        postDelayed(activateLongPress, remaining.coerceAtLeast(0L))
+    }
+
+    private fun startNativeScrub(preview: VideoSeekPreview, time: Long) {
+        removeCallbacks(activateLongPress)
+        ownsTouch = true
+        pendingDown?.let { down ->
+            val cancel = MotionEvent.obtain(down).apply { action = MotionEvent.ACTION_CANCEL }
+            super.dispatchTouchEvent(cancel)
+            cancel.recycle()
+            down.recycle()
+        }
+        pendingDown = null
+        parent?.requestDisallowInterceptTouchEvent(true)
+        savedControllerTimeout = controllerShowTimeoutMs
+        controllerShowTimeoutMs = 0
+        showController()
+        barDownTime = time
+        barX = scrubX(preview)
+        sendBarTouch(MotionEvent.ACTION_DOWN, time)
     }
 
     private fun previewScrub(position: Long) {
@@ -243,6 +289,10 @@ internal class VideoSwipeSeekPlayerView(context: Context) : PlayerView(context) 
     }
 
     fun cancelSwipe() {
+        removeCallbacks(activateLongPress)
+        pendingDown?.recycle()
+        pendingDown = null
+        awaitingSeekInfo = false
         if (ownsTouch) sendBarTouch(MotionEvent.ACTION_CANCEL, SystemClock.uptimeMillis())
         savedControllerTimeout?.let { controllerShowTimeoutMs = it }
         savedControllerTimeout = null
@@ -265,9 +315,11 @@ internal class VideoSwipeSeekPlayerView(context: Context) : PlayerView(context) 
         updateFallbackSeekButtons()
     }
 
-    private fun sameMedia(): Boolean = player?.let {
-        canSeek(it) && it.currentMediaItem == gestureMediaItem && it.currentMediaItemIndex == gestureMediaIndex
+    private fun sameMediaIdentity(): Boolean = player?.let {
+        !it.isPlayingAd && it.currentMediaItem == gestureMediaItem && it.currentMediaItemIndex == gestureMediaIndex
     } == true
+
+    private fun sameMedia(): Boolean = sameMediaIdentity() && player?.let(::canSeek) == true
 
     private fun canSeek(player: Player): Boolean = player.duration > 0 &&
         !player.isPlayingAd &&
