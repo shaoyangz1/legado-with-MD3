@@ -135,11 +135,11 @@ class CoverInterceptor(
             //
             // 命中规则：
             //   ① 精确命中（md5(原始封面地址)）→ 任何页面都直接用本地文件；
-            //   ② 书架类请求（PreferCache）额外接受“本书别名”命中：启动刷新把 coverUrl
+            //   ② 带 PreferCache 的请求额外接受“本书别名”命中：启动刷新把 coverUrl
             //     重写成带新 token 的链接时，图片内容其实没变，直接取别名指向的文件，
             //     不解析规则、不跑脚本、不联网；
-            //   ③ 详情页不设 PreferCache：在线时仍走慢速路径拉新链接，成功后同时刷新
-            //     精确键与别名键 → 下次书架展示的就是新封面。
+            //   ③ 未带 PreferCache（或没有 bookUrl）的请求只认精确键，miss 时走慢速
+            //     路径拉新链接，成功后同时刷新精确键与别名键。
             // 漫画模式走独立缓存目录不在此列；data: 内联图无需缓存。
             val isManga = request.extras[CoverExtras.Manga] == true
             val bookUrl = request.extras[CoverExtras.BookUrl]

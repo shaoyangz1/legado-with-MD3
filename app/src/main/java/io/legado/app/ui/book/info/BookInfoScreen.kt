@@ -855,8 +855,10 @@ private fun rememberBookInfoColorTheme(
     } ?: return null
     val sourceOrigin = if (usesDefaultCover) null else book.origin
     val loadOnlyWifi = !usesDefaultCover && loadCoverOnlyOnWifi
-    val requestKey = remember(coverPath, sourceOrigin, loadOnlyWifi) {
-        listOf(coverPath, sourceOrigin, loadOnlyWifi)
+    // 默认封面是本地图片地址，带上 bookUrl 的别名缓存会命中本书真实封面，必须排除
+    val bookUrl = if (usesDefaultCover) null else book.bookUrl
+    val requestKey = remember(coverPath, sourceOrigin, loadOnlyWifi, bookUrl) {
+        listOf(coverPath, sourceOrigin, loadOnlyWifi, bookUrl)
     }
 
     val seedColor = rememberImageSeedColor(
@@ -866,6 +868,9 @@ private fun rememberBookInfoColorTheme(
     ) {
         extras[CoverExtras.SourceOrigin] = sourceOrigin
         extras[CoverExtras.LoadOnlyWifi] = loadOnlyWifi
+        // 与书架/详情页封面共用本书别名缓存，避免为取色再解析书源规则或联网
+        extras[CoverExtras.BookUrl] = bookUrl
+        if (bookUrl != null) extras[CoverExtras.PreferCache] = true
     }
 
     return rememberThemeOverride(seedColor)
@@ -945,6 +950,7 @@ private fun BookInfoBackdrop(
     val backdropState = remember(
         book.name,
         book.author,
+        book.bookUrl,
         book.coverPath,
         book.origin,
         usesDefaultCover,
@@ -953,6 +959,7 @@ private fun BookInfoBackdrop(
         BookInfoBackdropState(
             name = book.name,
             author = book.author,
+            bookUrl = book.bookUrl,
             coverPath = if (usesDefaultCover) null else book.coverPath,
             sourceOrigin = if (usesDefaultCover) null else book.origin,
             style = style,
@@ -979,6 +986,8 @@ private fun BookInfoBackdrop(
                     author = currentBook.author,
                     path = currentBook.coverPath,
                     sourceOrigin = currentBook.sourceOrigin,
+                    bookUrl = currentBook.bookUrl,
+                    preferCache = true,
                     memoryCacheKey = currentBook.coverPath?.let { "$it#book-info-backdrop" },
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1036,6 +1045,7 @@ private fun BookInfoBackdrop(
 private data class BookInfoBackdropState(
     val name: String,
     val author: String,
+    val bookUrl: String,
     val coverPath: String?,
     val sourceOrigin: String?,
     val style: BookInfoBackdropStyle,
