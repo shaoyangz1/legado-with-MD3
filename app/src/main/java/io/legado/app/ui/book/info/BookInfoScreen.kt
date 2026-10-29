@@ -50,6 +50,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.outlined.FormatListBulleted
 import androidx.compose.material.icons.filled.Book
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.BookmarkAdd
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Edit
@@ -91,7 +92,6 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
@@ -101,7 +101,6 @@ import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import coil3.ImageLoader
 import coil3.compose.AsyncImage
@@ -193,6 +192,7 @@ fun BookInfoScreen(
     sharedTransitionScope: SharedTransitionScope? = null,
     animatedVisibilityScope: AnimatedVisibilityScope? = null,
     sharedCoverKey: String? = null,
+    entryCoverPath: String? = null,
 ) {
     val waitForSharedTransition = sharedCoverKey != null && animatedVisibilityScope != null
     val transition = animatedVisibilityScope?.transition
@@ -251,6 +251,7 @@ fun BookInfoScreen(
             sharedTransitionScope = sharedTransitionScope,
             animatedVisibilityScope = animatedVisibilityScope,
             sharedCoverKey = sharedCoverKey,
+            entryCoverPath = entryCoverPath,
             backdropStyle = backdropStyle,
             usesDefaultCover = usesDefaultCover,
             onOpenExplore = onOpenExplore,
@@ -296,6 +297,7 @@ private fun BookInfoScreenContent(
     sharedTransitionScope: SharedTransitionScope?,
     animatedVisibilityScope: AnimatedVisibilityScope?,
     sharedCoverKey: String?,
+    entryCoverPath: String?,
     backdropStyle: BookInfoBackdropStyle?,
     usesDefaultCover: Boolean,
     onNetworkCoverLoadError: (String?) -> Unit,
@@ -343,12 +345,13 @@ private fun BookInfoScreenContent(
         floatingActionButton = {
             // 未验证时不提供"直接开始阅读"的入口，避免绕过验证
             if (!state.privateLocked) {
+                val isVideo = state.book?.let { it.type and BookType.video != 0 } == true
                 ExtendedFloatingActionButton(
                     onClick = { onIntent(BookInfoIntent.ReadClick) },
                     containerColor = LegadoTheme.colorScheme.primaryContainer,
                     contentColor = LegadoTheme.colorScheme.onPrimaryContainer,
-                    icon = { AppIcon(Icons.Default.Book, null) },
-                    text = { AppText(stringResource(R.string.reading)) },
+                    icon = { AppIcon(if (isVideo) Icons.Default.PlayArrow else Icons.Default.Book, null) },
+                    text = { AppText(stringResource(if (isVideo) R.string.audio_play else R.string.reading)) },
                 )
             }
         },
@@ -407,6 +410,7 @@ private fun BookInfoScreenContent(
                                 item {
                                     BookInfoHeader(
                                         book = book,
+                                        entryCoverPath = entryCoverPath,
                                         highlightedTags = state.highlightedTags,
                                         kindLabels = state.kindLabels,
                                         groupNames = state.groupNames,
@@ -1183,6 +1187,7 @@ private fun BookInfoHeader(
     sharedCoverKey: String?,
     // 未验证时就地脱敏：保留同一套布局与共享元素，只把封面模糊、文字换成占位条
     locked: Boolean = false,
+    entryCoverPath: String? = null,
 ) {
     val coverDescription = stringResource(R.string.a11y_book_cover_actions, book.name)
     val hiddenDescription = stringResource(R.string.private_hidden_label)
@@ -1190,44 +1195,17 @@ private fun BookInfoHeader(
     // “限制封面比例”设置开启（默认）时固定 5:7，与旧版一致；关闭后按原图比例自适应
     val allowCoverRatioAdapt =
         !LocalAppUiConfiguration.current.cover.restrictCoverRatio
-    // 初始值优先取该封面已加载过的比例缓存，重进详情页不必先回弹 5:7 再等图重载
-    val coverAspectRatioState = remember(allowCoverRatioAdapt, book.bookUrl, coverPath) {
-        mutableFloatStateOf(
-            if (allowCoverRatioAdapt) {
-                cachedCoverAspectRatio(coverPath) ?: BOOK_INFO_COVER_DEFAULT_ASPECT_RATIO
-            } else {
-                BOOK_INFO_COVER_DEFAULT_ASPECT_RATIO
-            }
+    // 本次进入详情页的封面区域由入口旧图确定，不随详情 URL 或解码尺寸变化。
+    // 新图只在这个区域内 Fit；窗口宽度变化仍会重新计算可用尺寸。
+    val coverRatio = remember(allowCoverRatioAdapt, book.bookUrl) {
+        bookInfoEntryCoverAspectRatio(
+            allowCoverRatioAdapt,
+            cachedCoverAspectRatio(if (usesDefaultCover) null else entryCoverPath ?: coverPath),
         )
     }
-    // 按原图尺寸显示：横图按宽度限制、竖图按高度限制，范围均为 360~480dp
-    var coverSize by remember(book.bookUrl, coverPath) { mutableStateOf(IntSize.Zero) }
-    val density = LocalDensity.current.density
-    val maxCoverWidthDp = LocalConfiguration.current.screenWidthDp - 32f
-    val coverRatio = if (allowCoverRatioAdapt) {
-        coverAspectRatioState.floatValue
-    } else {
-        BOOK_INFO_COVER_DEFAULT_ASPECT_RATIO
-    }
-    val coverWidthDp = if (coverSize != IntSize.Zero) {
-        val wDp = coverSize.width / density
-        val hDp = coverSize.height / density
-        if (coverSize.width > coverSize.height) {
-            wDp.coerceIn(360f, 480f).coerceAtMost(maxCoverWidthDp)
-        } else {
-            (hDp.coerceIn(360f, 480f) * coverRatio).coerceAtMost(maxCoverWidthDp)
-        }
-    } else {
-        360f.coerceAtMost(maxCoverWidthDp)
-    }
+    val maxCoverWidthDp = (LocalConfiguration.current.screenWidthDp - 32f).coerceAtLeast(1f)
+    val coverWidthDp = 360f.coerceAtMost(maxCoverWidthDp)
     val coverHeightDp = bookInfoCoverHeightDp(coverRatio, coverWidthDp)
-    // 比例合法性已在 BookCoverImage 上报前校验，这里直接写入
-    val onCoverImageAspectRatio: ((Float) -> Unit)? = if (allowCoverRatioAdapt) {
-        { aspectRatio -> coverAspectRatioState.floatValue = aspectRatio }
-    } else null
-    val onCoverImageSize: (Int, Int) -> Unit = { width, height ->
-        if (width > 0 && height > 0) coverSize = IntSize(width, height)
-    }
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -1289,19 +1267,18 @@ private fun BookInfoHeader(
                             sharedCoverKey = sharedCoverKey,
                             sharedTransitionScope = sharedTransitionScope,
                             animatedVisibilityScope = animatedVisibilityScope,
-                            onImageAspectRatio = onCoverImageAspectRatio,
-                            onImageSize = onCoverImageSize,
                         )
                     } else {
                         CoilBookCover(
                             name = book.name,
                             author = book.author,
                             path = coverPath,
+                            placeholderCoverPath = entryCoverPath,
                             sourceOrigin = if (usesDefaultCover) null else book.origin,
-                            // 优先用缓存地址，避免每次进详情页都重新解析封面链接；
-                            // 封面换图后由书架那条链路更新别名。
+                            // 地址未变时可复用本书别名；详情换图时加载新地址，
+                            // 入口旧图只作占位，不能让别名缓存吞掉这次更新。
                             bookUrl = book.bookUrl,
-                            preferCache = true,
+                            preferCache = entryCoverPath == null || entryCoverPath == coverPath,
                             onError = onNetworkCoverLoadError,
                             modifier = Modifier.fillMaxSize(),
                             contentScale = ContentScale.Fit,
@@ -1309,8 +1286,6 @@ private fun BookInfoHeader(
                             sharedTransitionScope = sharedTransitionScope,
                             animatedVisibilityScope = animatedVisibilityScope,
                             sharedCoverKey = sharedCoverKey,
-                            onImageAspectRatio = onCoverImageAspectRatio,
-                            onImageSize = onCoverImageSize,
                         )
                     }
                 }

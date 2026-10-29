@@ -26,6 +26,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -131,6 +132,7 @@ fun BookCoverImage(
     requestBuilder: ImageRequest.Builder.() -> Unit = {},
     onImageAspectRatio: ((Float) -> Unit)? = null,
     onImageSize: ((Int, Int) -> Unit)? = null,
+    placeholderCoverPath: String? = null,
 ) {
     val context = LocalContext.current
     val isNight = LegadoTheme.isDark
@@ -220,52 +222,62 @@ fun BookCoverImage(
         }
 
         if (finalPath != null) {
-            AsyncImage(
-                model = buildCoverImageRequest(
-                    context = context,
-                    data = finalPath,
-                    sourceOrigin = sourceOrigin,
-                    loadOnlyWifi = coverSettings.loadOnlyOnWifi,
-                    crossfade = showLoadingPlaceholder,
-                    memoryCacheKey = coverMemoryCacheKey(
-                        sharedCoverKey = sharedCoverKey,
-                        explicitKey = memoryCacheKey,
-                        path = finalPath,
-                    ),
-                    bookUrl = bookUrl,
-                    preferCache = preferCache,
-                    configure = requestBuilder,
-                ),
-                contentDescription = null,
-                imageLoader = koinInject(),
-                contentScale = contentScale,
-                modifier = Modifier.fillMaxSize(),
-                onSuccess = { state ->
-                    val intrinsicSize = state.painter.intrinsicSize
-                    val aspectRatio = intrinsicSize.width / intrinsicSize.height
-                    if (aspectRatio.isFinite() && aspectRatio > 0f) {
-                        // 只有真实封面按原图比例上报；默认封面/加载中/失败一律回落
-                        // 调用方的 5:7。若默认封面也上报，它与真实封面并发加载时
-                        // 后完成的一方会覆盖先到的正确比例。
-                        finalPath?.let { cacheCoverAspectRatio(it, aspectRatio) }
-                        onImageAspectRatio?.invoke(aspectRatio)
-                        onImageSize?.invoke(
-                            intrinsicSize.width.toInt(),
-                            intrinsicSize.height.toInt(),
-                        )
-                    }
-                    isOnlineCoverLoaded = true
-                    onlineCoverLoadFailed = false
-                    onSuccess?.invoke()
-                    onLoadFinish?.invoke()
-                },
-                onError = {
-                    isOnlineCoverLoaded = false
-                    onlineCoverLoadFailed = true
-                    onError?.invoke()
-                    onLoadFinish?.invoke()
-                }
+            val request = buildCoverImageRequest(
+                context = context,
+                data = finalPath,
+                sourceOrigin = sourceOrigin,
+                loadOnlyWifi = coverSettings.loadOnlyOnWifi,
+                crossfade = showLoadingPlaceholder,
+                memoryCacheKey = coverMemoryCacheKey(sharedCoverKey, memoryCacheKey, finalPath),
+                bookUrl = bookUrl,
+                preferCache = preferCache,
+                configure = requestBuilder,
             )
+            val onLoaded: (coil3.Image) -> Unit = { image ->
+                val aspectRatio = image.width.toFloat() / image.height
+                if (aspectRatio.isFinite() && aspectRatio > 0f) {
+                    cacheCoverAspectRatio(finalPath, aspectRatio)
+                    onImageAspectRatio?.invoke(aspectRatio)
+                    onImageSize?.invoke(image.width, image.height)
+                }
+                isOnlineCoverLoaded = true
+                onlineCoverLoadFailed = false
+                onSuccess?.invoke()
+                onLoadFinish?.invoke()
+            }
+            val onFailed: () -> Unit = {
+                isOnlineCoverLoaded = false
+                onlineCoverLoadFailed = true
+                onError?.invoke()
+                onLoadFinish?.invoke()
+            }
+            if (placeholderCoverPath != null && bookUrl != null) {
+                // 详情封面直接持有旧图，不依赖加载器重建占位 painter。
+                key(bookUrl, sourceOrigin, sharedCoverKey) {
+                    RetainedCoverImage(
+                        request = request,
+                        imageLoader = koinInject(),
+                        entryPath = placeholderCoverPath,
+                        entryMemoryCacheKey = coverMemoryCacheKey(
+                            sharedCoverKey, explicitKey = null, path = placeholderCoverPath,
+                        ),
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = contentScale,
+                        onSuccess = onLoaded,
+                        onError = onFailed,
+                    )
+                }
+            } else {
+                AsyncImage(
+                    model = request,
+                    contentDescription = null,
+                    imageLoader = koinInject(),
+                    contentScale = contentScale,
+                    modifier = Modifier.fillMaxSize(),
+                    onSuccess = { onLoaded(it.result.image) },
+                    onError = { onFailed() },
+                )
+            }
         } else {
             LaunchedEffect(Unit) {
                 onLoadFinish?.invoke()
@@ -314,6 +326,7 @@ fun CoilBookCover(
     leftBottomText: String? = null,
     onImageAspectRatio: ((Float) -> Unit)? = null,
     onImageSize: ((Int, Int) -> Unit)? = null,
+    placeholderCoverPath: String? = null,
 ) {
     val coverSettings = LocalAppUiConfiguration.current.cover
     val isNight = LegadoTheme.isDark
@@ -404,6 +417,7 @@ fun CoilBookCover(
             .clip(shape)
     ) {
         BookCoverImage(
+            placeholderCoverPath = placeholderCoverPath,
             name = name,
             author = author,
             path = path,
