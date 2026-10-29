@@ -7,6 +7,8 @@ import android.os.SystemClock
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
+import android.widget.ImageButton
+import android.widget.LinearLayout
 import android.widget.TextView
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
@@ -17,7 +19,9 @@ import androidx.media3.common.Player
 import androidx.media3.common.SimpleBasePlayer
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -59,19 +63,19 @@ class VideoSwipeSeekPlayerViewTest {
     fun tearDown() { activity.pause().stop().destroy() }
 
     @Test
-    fun longPressOnPictureWorksWithControllerVisible() {
+    fun swipeOnPictureWorksWithControllerVisible() {
         view.showController()
         swipe()
     }
 
     @Test
-    fun longPressOnPictureWorksWithControllerHidden() {
+    fun swipeOnPictureWorksWithControllerHidden() {
         view.hideController()
         swipe()
     }
 
     @Test
-    fun holdingPictureActivatesNativeBarBeforeFingerMoves() {
+    fun holdingPictureWithoutMovingDoesNotStartScrub() {
         view.hideController()
         val down = SystemClock.uptimeMillis()
         MotionEvent.obtain(down, down, MotionEvent.ACTION_DOWN, 250f, 150f, 0).let {
@@ -79,8 +83,7 @@ class VideoSwipeSeekPlayerViewTest {
             it.recycle()
         }
         shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(700))
-        assertNotNull("holding alone must show the scrub preview", preview)
-        assertTrue(view.isControllerFullyVisible)
+        assertNull("holding alone must not start scrubbing", preview)
         MotionEvent.obtain(down, SystemClock.uptimeMillis(), MotionEvent.ACTION_UP, 250f, 150f, 0).let {
             view.dispatchTouchEvent(it)
             it.recycle()
@@ -89,7 +92,7 @@ class VideoSwipeSeekPlayerViewTest {
     }
 
     @Test
-    fun holdDuringLoadingActivatesWhenDurationArrives() {
+    fun swipeDuringLoadingStartsScrubbingWhenDurationArrives() {
         val current = SeekablePlayer(seekable = false, seekCommand = false,
             durationUs = C.TIME_UNSET, playbackState = Player.STATE_BUFFERING)
         view.player = current
@@ -106,7 +109,7 @@ class VideoSwipeSeekPlayerViewTest {
         assertEquals(null, preview)
         current.finishLoading()
         shadowOf(Looper.getMainLooper()).idle()
-        assertNotNull("pending hold should resume once duration is known", preview)
+        assertEquals("waits for the finger to move", null, preview)
         event(MotionEvent.ACTION_MOVE, 180f)
         val target = preview!!.positionMs
         event(MotionEvent.ACTION_UP, 180f)
@@ -114,7 +117,7 @@ class VideoSwipeSeekPlayerViewTest {
     }
 
     @Test
-    fun releasedLoadingHoldDoesNotActivateLater() {
+    fun releasedLoadingHoldDoesNotStartScrubbing() {
         val current = SeekablePlayer(seekable = false, seekCommand = false,
             durationUs = C.TIME_UNSET, playbackState = Player.STATE_BUFFERING)
         view.player = current
@@ -207,6 +210,81 @@ class VideoSwipeSeekPlayerViewTest {
         assertTrue(current.seekRequests.isEmpty())
     }
 
+    @Test
+    fun verticalSwipeOnLeftHalfAdjustsBrightness() {
+        var side: Boolean? = null
+        var fraction = 0f
+        var ended = false
+        view.onVerticalDragStart = { side = it }
+        view.onVerticalDrag = { _, value -> fraction = value }
+        view.onVerticalDragEnd = { ended = true }
+        view.hideController()
+        touch(MotionEvent.ACTION_DOWN, 250f, 300f, 0)
+        touch(MotionEvent.ACTION_MOVE, 250f, 100f, 100)
+        assertEquals(true, side)
+        assertTrue("upward drag must raise the value", fraction > 0.3f)
+        touch(MotionEvent.ACTION_UP, 250f, 100f, 200)
+        assertTrue(ended)
+        assertTrue((view.player as SeekablePlayer).seekRequests.isEmpty())
+        assertTrue(seeks.isEmpty())
+    }
+
+    @Test
+    fun verticalSwipeOnRightHalfAdjustsVolume() {
+        var side: Boolean? = null
+        var fraction = 0f
+        view.onVerticalDragStart = { side = it }
+        view.onVerticalDrag = { _, value -> fraction = value }
+        view.hideController()
+        touch(MotionEvent.ACTION_DOWN, 750f, 300f, 0)
+        touch(MotionEvent.ACTION_MOVE, 750f, 100f, 100)
+        assertEquals(false, side)
+        assertTrue("upward drag must raise the value", fraction > 0.3f)
+        assertTrue((view.player as SeekablePlayer).seekRequests.isEmpty())
+    }
+
+    @Test
+    fun lockedGesturesIgnoreSwipes() {
+        var vertical = false
+        var previews = 0
+        view.onVerticalDragStart = { vertical = true }
+        view.onSeekPreview = { if (it != null) previews++ }
+        view.gesturesEnabled = false
+        view.hideController()
+        touch(MotionEvent.ACTION_DOWN, 250f, 300f, 0)
+        touch(MotionEvent.ACTION_MOVE, 250f, 100f, 100)
+        touch(MotionEvent.ACTION_MOVE, 750f, 300f, 150)
+        touch(MotionEvent.ACTION_UP, 750f, 300f, 200)
+        assertFalse(vertical)
+        assertEquals(0, previews)
+        assertTrue((view.player as SeekablePlayer).seekRequests.isEmpty())
+        assertTrue(seeks.isEmpty())
+    }
+
+    @Test
+    fun lockButtonSitsNextToSettingsAndDisablesSwipes() {
+        val bar = view.findViewById<LinearLayout>(androidx.media3.ui.R.id.exo_basic_controls)
+        val settings = view.findViewById<View>(androidx.media3.ui.R.id.exo_settings)
+        val lock = bar.getChildAt(bar.indexOfChild(settings) - 1) as ImageButton
+        assertNotNull(lock.contentDescription)
+        lock.performClick()
+        view.hideController()
+        touch(MotionEvent.ACTION_DOWN, 250f, 300f, 0)
+        touch(MotionEvent.ACTION_MOVE, 250f, 100f, 100)
+        touch(MotionEvent.ACTION_UP, 250f, 100f, 200)
+        assertTrue((view.player as SeekablePlayer).seekRequests.isEmpty())
+    }
+
+    @Test
+    fun seekStepButtonsSkipByTenSecondsByDefault() {
+        val time = view.findViewById<LinearLayout>(androidx.media3.ui.R.id.exo_time)
+        val rewind = time.getChildAt(time.childCount - 3) as ImageButton
+        val forward = time.getChildAt(time.childCount - 2) as ImageButton
+        rewind.performClick()
+        forward.performClick()
+        assertEquals(listOf(50_000L, 70_000L), seeks)
+    }
+
     private fun swipe() {
         val bar = view.findViewById<View>(androidx.media3.ui.R.id.exo_progress) as TimeBar
         var nativePreview: Long? = null
@@ -221,7 +299,7 @@ class VideoSwipeSeekPlayerViewTest {
         val target = preview!!.positionMs
         assertEquals("overlay and native bar must share the same scrub position", nativePreview, target)
         val current = view.player as SeekablePlayer
-        assertTrue("preview spans full duration", target in 130_000..140_000)
+        assertTrue("preview follows the slowed-down ratio", target in 80_000..90_000)
         assertTrue("drag must not seek before release", current.seekRequests.isEmpty())
         touch(MotionEvent.ACTION_UP, 500f, 150f, 720)
         assertEquals(listOf(target), current.seekRequests)

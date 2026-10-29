@@ -5,21 +5,21 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 
 class VideoSwipeSeekGestureTest {
-    private val gesture = VideoSwipeSeekGesture(touchSlop = 8f, longPressTimeoutMs = 500)
+    private val gesture = VideoSwipeSeekGesture(touchSlop = 8f)
 
     @Test
     fun rightSwipePreviewsForwardAndCommitsOnlyOnceOnRelease() {
         begin()
-        assertEquals(VideoSeekPreview(135_000, 300_000), move(750f, 400f))
-        assertEquals(135_000L, gesture.finish(true))
+        assertEquals(VideoSeekPreview(85_000, 300_000), move(750f, 400f))
+        assertEquals(85_000L, gesture.finish(true))
         assertNull(gesture.finish(true))
     }
 
     @Test
     fun leftSwipeMovesBackwardFromOriginalPosition() {
         begin()
-        assertEquals(0L, move(250f, 400f)?.positionMs)
-        assertEquals(0L, move(0f, 400f)?.positionMs)
+        assertEquals(35_000L, move(250f, 400f)?.positionMs)
+        assertEquals(10_000L, move(0f, 400f)?.positionMs)
     }
 
     @Test
@@ -33,7 +33,7 @@ class VideoSwipeSeekGestureTest {
     @Test
     fun shortVideosUseTheirOwnDurationAsSwipeRange() {
         begin(position = 15_000, duration = 30_000)
-        assertEquals(22_500L, move(750f, 400f)?.positionMs)
+        assertEquals(17_500L, move(750f, 400f)?.positionMs)
     }
 
     @Test
@@ -63,7 +63,7 @@ class VideoSwipeSeekGestureTest {
     @Test
     fun edgeGesturesRemainAvailableForSystemNavigation() {
         listOf(0f, 20f, 980f, 1000f).forEach { edgeX ->
-            gesture.begin(edgeX, 400f, 1000f, 60_000, 300_000, 24f, timeMs = 0)
+            gesture.begin(edgeX, 400f, 1000f, 60_000, 300_000, 24f)
             assertNull(move(500f, 400f))
             assertNull(gesture.finish(true))
         }
@@ -79,30 +79,30 @@ class VideoSwipeSeekGestureTest {
     }
 
     @Test
-    fun ordinarySwipeDoesNotSeekEvenIfItLaterExceedsLongPressDuration() {
+    fun horizontalSwipeSeeksWithoutWaitingForLongPress() {
         begin()
-        assertNull(gesture.move(650f, 400f, timeMs = 100))
-        assertNull(gesture.move(750f, 400f, timeMs = 600))
-        assertNull(gesture.finish(true))
+        assertEquals(75_000L, move(650f, 400f)?.positionMs)
+        assertEquals(85_000L, move(750f, 400f)?.positionMs)
+        assertEquals(85_000L, gesture.finish(true))
     }
 
     @Test
-    fun slightMovementWhileHoldingStillAllowsLongPressSeek() {
+    fun slightMovementThenSwipeSeeks() {
         begin()
-        assertNull(gesture.move(503f, 402f, timeMs = 200))
-        assertEquals(135_000L, gesture.move(750f, 400f, timeMs = 500)?.positionMs)
+        assertNull(gesture.move(503f, 402f))
+        assertEquals(85_000L, gesture.move(750f, 400f)?.positionMs)
     }
 
     @Test
-    fun releasingLongPressWithoutDraggingDoesNotSeek() {
+    fun releasingWithoutMovingDoesNotSeek() {
         begin()
-        assertNull(gesture.move(500f, 400f, timeMs = 800))
+        assertNull(gesture.move(500f, 400f))
         assertNull(gesture.finish(true))
     }
 
-    private fun move(x: Float, y: Float) = gesture.move(x, y, timeMs = 600)
+    private fun move(x: Float, y: Float) = gesture.move(x, y)
 
     private fun begin(position: Long = 60_000, duration: Long = 300_000) {
-        gesture.begin(500f, 400f, 1000f, position, duration, 24f, timeMs = 0)
+        gesture.begin(500f, 400f, 1000f, position, duration, 24f)
     }
 }

@@ -30,7 +30,7 @@ class VideoSwipeSeekComposeTest {
     @get:Rule val compose = createComposeRule()
 
     @Test
-    fun longPressSeekSurvivesAndroidViewAndPreviewOverlay() {
+    fun swipeSeekSurvivesAndroidViewAndPreviewOverlay() {
         val preview = mutableStateOf<VideoSeekPreview?>(null)
         val seeks = mutableListOf<Long>()
         val player = VideoSwipeSeekPlayerViewTest.SeekablePlayer()
@@ -63,6 +63,6 @@ class VideoSwipeSeekComposeTest {
         compose.waitForIdle()
         assertTrue(seeks.isEmpty())
         assertEquals(1, player.seekRequests.size)
-        assertTrue(player.seekRequests.single() in 130_000..140_000)
+        assertTrue(player.seekRequests.single() in 80_000..90_000)
     }
 }

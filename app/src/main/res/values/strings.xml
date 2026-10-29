@@ -775,6 +775,9 @@
     <string name="music">Music</string>
     <string name="audio">Audio</string>
     <string name="video">Video</string>
+    <string name="video_gesture_lock">Lock gestures</string>
+    <string name="video_gesture_unlock">Unlock gestures</string>
+    <string name="video_seek_step">Seek step %1$d seconds</string>
     <string name="web_file">Web file</string>
     <string name="is_enable">Enable</string>
     <string name="enable_js">Enable js</string>
