@@ -259,6 +259,7 @@ fun BookInfoRouteScreen(
     // （`route.sharedCoverKey` 就是源卡片登记的那一个），页面自身不再接管返回。
     BookInfoScreen(
         state = uiState,
+        entryCoverPath = coverPath,
         groups = viewModel.allGroups
             .collectAsStateWithLifecycle(persistentListOf<BookGroup>()).value,
         onIntent = viewModel::onIntent,

@@ -1,13 +1,12 @@
 package io.legado.app.ui.book.video
 
 import android.content.pm.ActivityInfo
+import android.text.format.DateUtils
 import android.view.View
 import androidx.activity.compose.LocalActivity
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
@@ -19,6 +18,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -34,7 +34,6 @@ import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.media3.ui.PlayerView
 import io.legado.app.R
 import io.legado.app.utils.toastOnUi
 import kotlinx.coroutines.flow.collectLatest
@@ -51,6 +50,7 @@ fun VideoPlayerScreen(
     val activity = LocalActivity.current
     val view = LocalView.current
     val controlsVisible = remember { mutableStateOf(true) }
+    var seekPreview by remember(bookUrl, state.chapterIndex) { mutableStateOf<VideoSeekPreview?>(null) }
 
     LaunchedEffect(bookUrl) {
         viewModel.init(bookUrl)
@@ -103,23 +103,41 @@ fun VideoPlayerScreen(
             AndroidView(
                 modifier = Modifier.fillMaxSize(),
                 factory = { context ->
-                    PlayerView(context).apply {
+                    VideoSwipeSeekPlayerView(context).apply {
                         useController = true
+                        setShowPreviousButton(false)
+                        setShowNextButton(false)
                         player = viewModel.exoPlayer
-                        setControllerVisibilityListener(
-                            PlayerView.ControllerVisibilityListener { visibility ->
-                                controlsVisible.value = visibility == View.VISIBLE
-                            }
-                        )
+                        onControllerVisibilityChanged = { visibility ->
+                            controlsVisible.value = visibility == View.VISIBLE
+                        }
                         setFullscreenButtonClickListener {
                             viewModel.onIntent(VideoPlayerIntent.ToggleFullscreen)
                         }
                     }
                 },
+                update = { playerView ->
+                    playerView.onSeekPreview = { seekPreview = it }
+                    playerView.onSeek = { viewModel.onIntent(VideoPlayerIntent.SeekTo(it)) }
+                },
                 onRelease = {
+                    it.cancelSwipe()
                     it.player = null
                 },
             )
+            seekPreview?.let { preview ->
+                Surface(
+                    modifier = Modifier.align(Alignment.Center),
+                    color = Color.Black.copy(alpha = 0.75f),
+                    contentColor = Color.White,
+                ) {
+                    Text(
+                        text = "${DateUtils.formatElapsedTime(preview.positionMs / 1000)} / " +
+                            DateUtils.formatElapsedTime(preview.durationMs / 1000),
+                        modifier = Modifier.padding(horizontal = 24.dp, vertical = 16.dp),
+                    )
+                }
+            }
             if (state.chapterTitle.isNotBlank()) {
                 val titleAlpha by animateFloatAsState(
                     targetValue = if (controlsVisible.value) 1f else 0f,
@@ -145,27 +163,6 @@ fun VideoPlayerScreen(
                         modifier = Modifier.padding(top = 8.dp),
                     ) {
                         Text(text = stringResource(R.string.retry))
-                    }
-                }
-            }
-            if (state.chapterCount > 1) {
-                Row(
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .padding(bottom = 88.dp),
-                    horizontalArrangement = Arrangement.spacedBy(16.dp),
-                ) {
-                    Button(
-                        onClick = { viewModel.onIntent(VideoPlayerIntent.PreviousChapter) },
-                        enabled = state.chapterIndex > 0,
-                    ) {
-                        Text(text = stringResource(R.string.previous_chapter))
-                    }
-                    Button(
-                        onClick = { viewModel.onIntent(VideoPlayerIntent.NextChapter) },
-                        enabled = state.chapterIndex < state.chapterCount - 1,
-                    ) {
-                        Text(text = stringResource(R.string.next_chapter))
                     }
                 }
             }
