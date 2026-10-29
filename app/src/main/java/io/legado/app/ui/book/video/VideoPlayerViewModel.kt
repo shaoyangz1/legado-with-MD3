@@ -24,6 +24,7 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import splitties.init.appCtx
 
 internal fun clampSeekPosition(positionMs: Long, durationMs: Long): Long {
@@ -202,7 +203,10 @@ class VideoPlayerViewModel(
                 return@launch
             }
             try {
-                val content = WebBook.getContentAwait(source, currentBook, chapter)
+                // 正文规则里的 java.webViewGetSource 要求后台线程，规则本身也可能做重活。
+                val content = withContext(Dispatchers.IO) {
+                    WebBook.getContentAwait(source, currentBook, chapter)
+                }
                 if (content.isBlank()) {
                     _uiState.update { it.copy(isLoading = false) }
                     _effects.tryEmit(VideoPlayerEffect.ShowToast("未获取到视频链接"))
