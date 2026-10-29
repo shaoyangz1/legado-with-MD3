@@ -66,7 +66,9 @@ internal fun RetainedCoverImage(
             imageLoader.memoryCache?.get(MemoryCache.Key(it))?.image
         }
         val image = cached ?: (imageLoader.execute(
-            request.newBuilder().size(sizeResolver).crossfade(false).build()
+            request.newBuilder().apply {
+                if (request.defined.sizeResolver == null) size(sizeResolver)
+            }.crossfade(false).build()
         ) as? SuccessResult)?.image
         if (image == null) {
             if (displayed == null) currentOnError()

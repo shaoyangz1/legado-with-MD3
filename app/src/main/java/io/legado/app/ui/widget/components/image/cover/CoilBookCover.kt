@@ -133,6 +133,7 @@ fun BookCoverImage(
     onImageAspectRatio: ((Float) -> Unit)? = null,
     onImageSize: ((Int, Int) -> Unit)? = null,
     placeholderCoverPath: String? = null,
+    placeholderCoverMemoryKey: String? = null,
 ) {
     val context = LocalContext.current
     val isNight = LegadoTheme.isDark
@@ -258,7 +259,7 @@ fun BookCoverImage(
                         request = request,
                         imageLoader = koinInject(),
                         entryPath = placeholderCoverPath,
-                        entryMemoryCacheKey = coverMemoryCacheKey(
+                        entryMemoryCacheKey = placeholderCoverMemoryKey ?: coverMemoryCacheKey(
                             sharedCoverKey, explicitKey = null, path = placeholderCoverPath,
                         ),
                         modifier = Modifier.fillMaxSize(),

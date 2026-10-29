@@ -10,21 +10,21 @@ class VideoSwipeSeekGestureTest {
     @Test
     fun rightSwipePreviewsForwardAndCommitsOnlyOnceOnRelease() {
         begin()
-        assertEquals(VideoSeekPreview(90_000, 300_000), move(750f, 400f))
-        assertEquals(90_000L, gesture.finish(true))
+        assertEquals(VideoSeekPreview(135_000, 300_000), move(750f, 400f))
+        assertEquals(135_000L, gesture.finish(true))
         assertNull(gesture.finish(true))
     }
 
     @Test
     fun leftSwipeMovesBackwardFromOriginalPosition() {
         begin()
-        assertEquals(30_000L, move(250f, 400f)?.positionMs)
+        assertEquals(0L, move(250f, 400f)?.positionMs)
         assertEquals(0L, move(0f, 400f)?.positionMs)
     }
 
     @Test
     fun seekIsClampedAtBothEnds() {
-        begin(position = 290_000)
+        begin(position = 2135_000)
         assertEquals(300_000L, move(1000f, 400f)?.positionMs)
         begin(position = 10_000)
         assertEquals(0L, move(0f, 400f)?.positionMs)
@@ -90,7 +90,7 @@ class VideoSwipeSeekGestureTest {
     fun slightMovementWhileHoldingStillAllowsLongPressSeek() {
         begin()
         assertNull(gesture.move(503f, 402f, timeMs = 200))
-        assertEquals(90_000L, gesture.move(750f, 400f, timeMs = 500)?.positionMs)
+        assertEquals(135_000L, gesture.move(750f, 400f, timeMs = 500)?.positionMs)
     }
 
     @Test

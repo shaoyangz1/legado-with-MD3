@@ -145,6 +145,7 @@ import io.legado.app.ui.widget.components.image.cover.BookCoverImage
 import io.legado.app.ui.widget.components.image.cover.CoilBookCover
 import io.legado.app.ui.widget.components.image.cover.buildCoverImageRequest
 import io.legado.app.ui.widget.components.image.cover.cachedCoverAspectRatio
+import io.legado.app.ui.widget.components.image.cover.coverMemoryCacheKey
 import io.legado.app.ui.widget.components.image.cover.usesDefaultBookCover
 import io.legado.app.ui.widget.components.log.AppLogSheet
 import io.legado.app.ui.widget.components.menuItem.RoundDropdownMenu
@@ -388,6 +389,8 @@ private fun BookInfoScreenContent(
                     Box(modifier = Modifier.fillMaxSize()) {
                         BookInfoBackdrop(
                             book = book,
+                            entryCoverPath = entryCoverPath,
+                            entrySharedCoverKey = sharedCoverKey,
                             style = resolvedBackdropStyle,
                             usesDefaultCover = usesDefaultCover,
                             onNetworkCoverLoadError = onNetworkCoverLoadError,
@@ -947,28 +950,14 @@ private fun BookInfoOverflowAction(
 @Composable
 private fun BookInfoBackdrop(
     book: BookInfoBookUi,
+    entryCoverPath: String?,
+    entrySharedCoverKey: String?,
     style: BookInfoBackdropStyle,
     usesDefaultCover: Boolean,
     onNetworkCoverLoadError: (String?) -> Unit,
 ) {
-    val backdropState = remember(
-        book.name,
-        book.author,
-        book.bookUrl,
-        book.coverPath,
-        book.origin,
-        usesDefaultCover,
-        style,
-    ) {
-        BookInfoBackdropState(
-            name = book.name,
-            author = book.author,
-            bookUrl = book.bookUrl,
-            coverPath = if (usesDefaultCover) null else book.coverPath,
-            sourceOrigin = if (usesDefaultCover) null else book.origin,
-            style = style,
-        )
-    }
+    // URL 更新不销毁背景画布；新图准备好之前持续保留上一张已显示的背景。
+    val initialCoverPath = remember(book.bookUrl, book.origin) { entryCoverPath ?: book.coverPath }
     val seedOverlay = lerp(
         LegadoTheme.colorScheme.secondaryContainer,
         LegadoTheme.seedColor,
@@ -979,38 +968,26 @@ private fun BookInfoBackdrop(
             .fillMaxSize()
             .clearAndSetSemantics { }
     ) {
-        Crossfade(
-            targetState = backdropState,
-            animationSpec = tween(800),
-            label = "BackdropCrossfade"
-        ) { currentBook ->
-            if (currentBook.style.showCover) {
-                BookCoverImage(
-                    name = currentBook.name,
-                    author = currentBook.author,
-                    path = currentBook.coverPath,
-                    sourceOrigin = currentBook.sourceOrigin,
-                    bookUrl = currentBook.bookUrl,
-                    preferCache = true,
-                    memoryCacheKey = currentBook.coverPath?.let { "$it#book-info-backdrop" },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(480.dp)
-                        .then(
-                            if (currentBook.style.blurCover) {
-                                Modifier.blur(24.dp)
-                            } else {
-                                Modifier
-                            }
-                        ),
-                    contentScale = ContentScale.Crop,
-                    showLoadingPlaceholder = false,
-                    onError = { onNetworkCoverLoadError(currentBook.coverPath) },
-                    requestBuilder = {
-                        size(Size(384, 384))
-                    }
-                )
-            }
+        if (style.showCover) {
+            BookCoverImage(
+                name = book.name,
+                author = book.author,
+                path = if (usesDefaultCover) null else book.coverPath,
+                sourceOrigin = if (usesDefaultCover) null else book.origin,
+                bookUrl = book.bookUrl,
+                preferCache = initialCoverPath == null || initialCoverPath == book.coverPath,
+                memoryCacheKey = book.coverPath?.let { "$it#book-info-backdrop" },
+                placeholderCoverPath = if (usesDefaultCover) null else initialCoverPath,
+                placeholderCoverMemoryKey = coverMemoryCacheKey(entrySharedCoverKey, null, initialCoverPath),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(480.dp)
+                    .then(if (style.blurCover) Modifier.blur(24.dp) else Modifier),
+                contentScale = ContentScale.Crop,
+                showLoadingPlaceholder = false,
+                onError = { onNetworkCoverLoadError(book.coverPath) },
+                requestBuilder = { size(Size(384, 384)) },
+            )
         }
         if (style.applySeedOverlay) {
             Box(
@@ -1045,15 +1022,6 @@ private fun BookInfoBackdrop(
         )
     }
 }
-
-private data class BookInfoBackdropState(
-    val name: String,
-    val author: String,
-    val bookUrl: String,
-    val coverPath: String?,
-    val sourceOrigin: String?,
-    val style: BookInfoBackdropStyle,
-)
 
 @Composable
 private fun BookInfoOverflowMenu(

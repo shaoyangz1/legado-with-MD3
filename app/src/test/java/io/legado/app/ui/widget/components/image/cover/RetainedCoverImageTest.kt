@@ -20,6 +20,7 @@ import coil3.intercept.Interceptor
 import coil3.memory.MemoryCache
 import coil3.request.ImageRequest
 import coil3.request.SuccessResult
+import coil3.size.Size
 import kotlinx.coroutines.CompletableDeferred
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -47,6 +48,7 @@ class RetainedCoverImageTest {
     private val path = mutableStateOf("entry")
     private val width = mutableStateOf(240)
     private val requests = CopyOnWriteArrayList<String>()
+    private val requestSizes = CopyOnWriteArrayList<Size>()
     private val response = CompletableDeferred<Image>()
     private val successes = AtomicInteger()
     private val errors = AtomicInteger()
@@ -58,6 +60,7 @@ class RetainedCoverImageTest {
             .components {
                 add(Interceptor { chain ->
                     requests += chain.request.data.toString()
+                    requestSizes += chain.size
                     SuccessResult(response.await(), chain.request, DataSource.NETWORK)
                 })
             }.build()
@@ -142,15 +145,32 @@ class RetainedCoverImageTest {
         assertTrue(requests.isEmpty())
     }
 
-    private fun show() {
+    @Test
+    fun backdropKeepsEntryImageBeyondOldFadeDurationAndHonorsDecodeSize() {
+        path.value = "detail"
+        show(backdrop = true)
+        compose.waitForIdle()
+        compose.waitUntil(timeoutMillis = 5000) { requests.isNotEmpty() }
+        compose.mainClock.advanceTimeBy(1200)
+        assertEquals("old background must survive the loading interval", Color.Red, pixel())
+        assertEquals(listOf(Size(384, 384)), requestSizes.toList())
+        response.complete(ColorImage(android.graphics.Color.BLUE, 20, 20))
+        compose.waitUntil(timeoutMillis = 5000) { successes.get() > 0 }
+        compose.waitForIdle()
+        assertEquals(Color.Blue, pixel())
+    }
+
+    private fun show(backdrop: Boolean = false) {
         compose.setContent {
             RetainedCoverImage(
                 request = ImageRequest.Builder(RuntimeEnvironment.getApplication())
-                    .data(path.value).memoryCacheKey(path.value).build(),
+                    .data(path.value)
+                    .memoryCacheKey(if (backdrop) "${path.value}#book-info-backdrop" else path.value)
+                    .apply { if (backdrop) size(384, 384) }.build(),
                 imageLoader = loader,
                 entryPath = "entry",
                 entryMemoryCacheKey = "entry",
-                modifier = Modifier.size(width.value.dp).background(Color.White).testTag("cover"),
+                modifier = Modifier.size(width.value.dp).background(if (backdrop) Color.Black else Color.White).testTag("cover"),
                 onSuccess = { successes.incrementAndGet() },
                 onError = { errors.incrementAndGet() },
             )

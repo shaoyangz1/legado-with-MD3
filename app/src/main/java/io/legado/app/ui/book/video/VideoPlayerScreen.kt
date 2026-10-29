@@ -34,7 +34,6 @@ import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.media3.ui.PlayerView
 import io.legado.app.R
 import io.legado.app.utils.toastOnUi
 import kotlinx.coroutines.flow.collectLatest
@@ -108,14 +107,10 @@ fun VideoPlayerScreen(
                         useController = true
                         setShowPreviousButton(false)
                         setShowNextButton(false)
-                        setShowRewindButton(false)
-                        setShowFastForwardButton(false)
                         player = viewModel.exoPlayer
-                        setControllerVisibilityListener(
-                            PlayerView.ControllerVisibilityListener { visibility ->
-                                controlsVisible.value = visibility == View.VISIBLE
-                            }
-                        )
+                        onControllerVisibilityChanged = { visibility ->
+                            controlsVisible.value = visibility == View.VISIBLE
+                        }
                         setFullscreenButtonClickListener {
                             viewModel.onIntent(VideoPlayerIntent.ToggleFullscreen)
                         }
