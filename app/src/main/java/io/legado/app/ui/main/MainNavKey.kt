@@ -189,7 +189,11 @@ data class MainRouteAudioPlay(
 data class MainRouteVideoPlay(
     val bookUrl: String? = null,
     val inBookshelf: Boolean = true,
-    val sharedCoverKey: String? = null,
+    /** RSS 文章里的视频：从阅读页进入时只带定位信息，正文由会话按规则重新解析。 */
+    val rssOrigin: String? = null,
+    val rssLink: String? = null,
+    val rssSort: String? = null,
+    val rssTitle: String? = null,
 ) : MainRoute
 
 @Serializable
@@ -269,6 +273,8 @@ data class MainRouteExploreShow(
     val title: String?,
     val sourceUrl: String,
     val exploreUrl: String?,
+    /** 仅详情页标签跳转的运行时地址启用；书源规则入口保持原有解析。 */
+    val usePageParamFallback: Boolean = false,
 ) : MainRoute
 
 @Serializable

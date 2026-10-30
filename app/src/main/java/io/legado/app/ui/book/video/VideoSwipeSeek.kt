@@ -30,6 +30,10 @@ import kotlin.math.roundToLong
 @Stable
 internal data class VideoSeekPreview(val positionMs: Long, val durationMs: Long)
 
+internal fun clampSeekPosition(positionMs: Long, durationMs: Long): Long {
+    return if (durationMs > 0) positionMs.coerceIn(0L, durationMs) else positionMs.coerceAtLeast(0L)
+}
+
 /** 横向拖动多少屏宽才相当于整段视频时长；值越大，进度变化越迟钝。 */
 private const val SEEK_SCREENS_PER_DURATION = 3f
 
