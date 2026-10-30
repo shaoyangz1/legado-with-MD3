@@ -1568,8 +1568,12 @@ class BookInfoViewModel(
                 )
             )
             BookInfoMenuAction.Edit -> openEdit()
-            BookInfoMenuAction.Share -> {
-                val bookJson = GSON.toJson(book)
+            BookInfoMenuAction.Share, BookInfoMenuAction.ShareWebLink -> {
+                val shareText = if (action == BookInfoMenuAction.ShareWebLink) {
+                    book.bookUrl
+                } else {
+                    "${book.bookUrl}#${GSON.toJson(book)}"
+                }
                 emitEffect(
                     BookInfoEffect.RunSourceCallback(
                         event = SourceCallBack.CLICK_SHARE_BOOK,
@@ -1577,7 +1581,7 @@ class BookInfoViewModel(
                         book = book.uiCopy(),
                         action = BookInfoCallbackAction.ShareText(
                             chooserTitle = book.name,
-                            text = "${book.bookUrl}#$bookJson",
+                            text = shareText,
                         )
                     )
                 )

@@ -20,6 +20,7 @@ import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.SharedTransitionScope
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -911,11 +912,33 @@ private fun BookInfoTopBarActions(
             contentDescription = stringResource(R.string.edit)
         )
     }
-    TopBarActionButton(
-        onClick = { onMenuAction(BookInfoMenuAction.Share) },
-        imageVector = Icons.Default.Share,
-        contentDescription = stringResource(R.string.share)
-    )
+    var shareExpanded by remember { mutableStateOf(false) }
+    Box {
+        TopBarActionButton(
+            onClick = { shareExpanded = true },
+            imageVector = Icons.Default.Share,
+            contentDescription = stringResource(R.string.share)
+        )
+        RoundDropdownMenu(
+            expanded = shareExpanded,
+            onDismissRequest = { shareExpanded = false },
+        ) {
+            RoundDropdownMenuItem(
+                text = stringResource(R.string.share_web_link),
+                onClick = {
+                    shareExpanded = false
+                    onMenuAction(BookInfoMenuAction.ShareWebLink)
+                },
+            )
+            RoundDropdownMenuItem(
+                text = stringResource(R.string.share_book_info),
+                onClick = {
+                    shareExpanded = false
+                    onMenuAction(BookInfoMenuAction.Share)
+                },
+            )
+        }
+    }
     BookInfoOverflowAction(
         state = state,
         onMenuAction = onMenuAction,
@@ -1165,17 +1188,22 @@ private fun BookInfoHeader(
     // “限制封面比例”设置开启（默认）时固定 5:7，与旧版一致；关闭后按原图比例自适应
     val allowCoverRatioAdapt =
         !LocalAppUiConfiguration.current.cover.restrictCoverRatio
-    // 本次进入详情页的封面区域由入口旧图确定，不随详情 URL 或解码尺寸变化。
-    // 新图只在这个区域内 Fit；窗口宽度变化仍会重新计算可用尺寸。
-    val coverRatio = remember(allowCoverRatioAdapt, book.bookUrl) {
-        bookInfoEntryCoverAspectRatio(
+    // 优先固定入口比例；无缓存时允许首个有效加载结果补齐一次，后续换图保持布局。
+    var resolvedCoverRatio by remember(allowCoverRatioAdapt, book.bookUrl) {
+        mutableStateOf(resolveBookInfoCoverRatio(
             allowCoverRatioAdapt,
             cachedCoverAspectRatio(if (usesDefaultCover) null else entryCoverPath ?: coverPath),
-        )
+            null,
+        ))
     }
+    val coverRatio = resolvedCoverRatio ?: BOOK_INFO_COVER_DEFAULT_ASPECT_RATIO
     val maxCoverWidthDp = (LocalConfiguration.current.screenWidthDp - 32f).coerceAtLeast(1f)
     val coverWidthDp = 360f.coerceAtMost(maxCoverWidthDp)
-    val coverHeightDp = bookInfoCoverHeightDp(coverRatio, coverWidthDp)
+    val coverHeight by animateDpAsState(
+        targetValue = bookInfoCoverHeightDp(coverRatio, coverWidthDp).dp,
+        animationSpec = tween(350, easing = FastOutSlowInEasing),
+        label = "bookInfoCoverHeight",
+    )
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -1208,7 +1236,7 @@ private fun BookInfoHeader(
                 Box(
                     modifier = Modifier
                         .width(coverWidthDp.dp)
-                        .height(coverHeightDp.dp)
+                        .height(coverHeight)
                         .then(
                             // 脱敏时封面不可点：点开大图等于直接泄漏
                             if (locked) {
@@ -1250,6 +1278,11 @@ private fun BookInfoHeader(
                             bookUrl = book.bookUrl,
                             preferCache = entryCoverPath == null || entryCoverPath == coverPath,
                             onError = onNetworkCoverLoadError,
+                            onImageAspectRatio = { ratio ->
+                                resolvedCoverRatio = resolveBookInfoCoverRatio(
+                                    allowCoverRatioAdapt, resolvedCoverRatio, ratio,
+                                )
+                            },
                             modifier = Modifier.fillMaxSize(),
                             contentScale = ContentScale.Fit,
                             showLoadingPlaceholder = sharedCoverKey == null,

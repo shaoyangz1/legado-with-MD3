@@ -6,6 +6,24 @@ import org.junit.Test
 class BookInfoCoverSizingTest {
 
     @Test
+    fun missingEntryRatioAcceptsFirstValidImageAndThenStaysFixed() {
+        var ratio = resolveBookInfoCoverRatio(true, null, null)
+        assertEquals(null, ratio)
+        ratio = resolveBookInfoCoverRatio(true, ratio, Float.NaN)
+        assertEquals(null, ratio)
+        ratio = resolveBookInfoCoverRatio(true, ratio, 800f / 538f)
+        assertEquals(242.1f, bookInfoCoverHeightDp(requireNotNull(ratio), 360f), 0.01f)
+        assertEquals(ratio, resolveBookInfoCoverRatio(true, ratio, 5f / 7f))
+    }
+
+    @Test
+    fun cachedEntryRatioAndRestrictedRatioDoNotChangeOnLoad() {
+        val entryRatio = 800f / 538f
+        assertEquals(entryRatio, resolveBookInfoCoverRatio(true, entryRatio, 5f / 7f)!!, 0.001f)
+        assertEquals(5f / 7f, resolveBookInfoCoverRatio(false, null, entryRatio)!!, 0.001f)
+    }
+
+    @Test
     fun entryCoverUsesDiscoveryRatioBeforeDetailImageLoads() {
         val ratio = bookInfoEntryCoverAspectRatio(true, 16f / 9f)
         assertEquals(202.5f, bookInfoCoverHeightDp(ratio, 360f), 0.01f)
