@@ -1506,7 +1506,16 @@ fun MainActivity.mainEntryProvider(
                 popped
             },
             onOpenSearch = { keyword ->
-                onNavigateToRoute(MainRouteSearch(key = keyword))
+                // 从本书的作者/书名/标签发起搜索时，默认勾选当前书源
+                val source = bookInfoViewModel.bookSource
+                onNavigateToRoute(
+                    MainRouteSearch(
+                        key = keyword,
+                        scopeRaw = source?.let {
+                            BookSearchScope.encodeSource(it.bookSourceName, it.bookSourceUrl)
+                        },
+                    )
+                )
             },
             onOpenBookSourceEdit = { sourceUrl ->
                 onNavigateToRoute(MainRouteBookSourceEdit(sourceUrl))

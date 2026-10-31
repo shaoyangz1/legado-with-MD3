@@ -398,8 +398,57 @@ class VideoPlaySessionTest {
         awaitWrites()
     }
 
-    // ——————————————————— 播放页菜单能力 ———————————————————
+    @Test
+    fun openingAnotherBookStopsPreviousSession() = runBlocking {
+        val first = insertVideoBook()
+        VideoPlay.attachPlayer(player.instance)
+        VideoPlay.openBook(first.bookUrl)
+        awaitState("Episode 1") { it.chapterTitle == "Episode 1" }
 
+        val second = videoBook().copy(
+            bookUrl = "https://video.test/book2",
+            tocUrl = "https://video.test/book2",
+            name = "Video 2",
+        )
+        fixture.database.bookDao.insert(second)
+        fixture.database.bookChapterDao.insert(
+            BookChapter(
+                url = "${second.bookUrl}/1",
+                bookUrl = second.bookUrl,
+                title = "Episode 1",
+                index = 0,
+            ),
+        )
+
+        player.stopCalls = 0
+        VideoPlay.openBook(second.bookUrl)
+        awaitState("Video 2") { it.bookName == "Video 2" }
+
+        assertTrue("切换书籍时应先停止上一场播放", player.stopCalls > 0)
+        awaitWrites()
+    }
+
+    @Test
+    fun seekByClampsToDurationBounds() = runBlocking {
+        val book = insertVideoBook()
+        VideoPlay.attachPlayer(player.instance)
+        VideoPlay.openBook(book.bookUrl)
+        awaitState("Episode 1") { it.chapterTitle == "Episode 1" }
+
+        player.duration = 60_000L
+        player.position = 5_000L
+        VideoPlay.seekBy(15)
+        assertEquals(20_000L, player.position)
+
+        VideoPlay.seekBy(-30)
+        assertEquals(0L, player.position)
+
+        VideoPlay.seekBy(100)
+        assertEquals(60_000L, player.position)
+        awaitWrites()
+    }
+
+    // ——————————————————— 播放页菜单能力 ———————————————————
     @Test
     fun uiStateCarriesSourceCapabilitiesForMenu() = runBlocking {
         source.loginUrl = "https://video.test/login"
@@ -544,7 +593,9 @@ class VideoPlaySessionTest {
 
     private class TestPlayer {
         var position = 0L
+        var duration = 0L
         var pauseCalls = 0
+        var stopCalls = 0
         var released = false
         private var playing = false
         private var mediaItemCount = 0
@@ -554,6 +605,7 @@ class VideoPlaySessionTest {
         ) { _, method, args ->
             when (method.name) {
                 "getCurrentPosition" -> position
+                "getDuration" -> duration
                 "getMediaItemCount" -> mediaItemCount
                 "setMediaItem" -> {
                     mediaItemCount = 1
@@ -567,9 +619,26 @@ class VideoPlaySessionTest {
                     null
                 }
 
+                "seekTo" -> {
+                    // 重载有 seekTo(long) 与 seekTo(index, long)，最后一个参数都是目标位置
+                    (args?.lastOrNull() as? Long)?.let { position = it }
+                    null
+                }
+
                 "pause" -> {
                     pauseCalls++
                     playing = false
+                    null
+                }
+
+                "stop" -> {
+                    stopCalls++
+                    playing = false
+                    null
+                }
+
+                "clearMediaItems" -> {
+                    mediaItemCount = 0
                     null
                 }
 

@@ -33,6 +33,10 @@ data class VideoPlayerUiState(
     val startFull: Boolean = false,
     /** 长按倍速，单位 0.1 倍。 */
     val longPressSpeed: Int = 30,
+    /** 快进/倒退按钮的步长，单位秒。 */
+    val seekStep: Int = 15,
+    /** 横向滑动调进度：拖多少屏宽等于整段时长，值越大越迟钝。 */
+    val seekScreens: Float = 6f,
     val floatingEnabled: Boolean = false,
     val sheet: VideoPlayerSheet? = null,
     /** 当前会话的书源地址；RSS 文章与直链播放为空。 */
@@ -81,6 +85,15 @@ sealed interface VideoPlayerIntent {
     data object Pause : VideoPlayerIntent
 
     data class SeekTo(val positionMs: Long) : VideoPlayerIntent
+
+    /** 快进 / 倒退：正数前进、负数后退，单位秒。 */
+    data class SeekBy(val seconds: Int) : VideoPlayerIntent
+
+    /** 调整快进/倒退按钮的步长，单位秒。 */
+    data class SetSeekStep(val seconds: Int) : VideoPlayerIntent
+
+    /** 调整横向滑动调进度的灵敏度（拖多少屏宽等于整段时长）。 */
+    data class SetSeekScreens(val value: Float) : VideoPlayerIntent
 
     data object PreviousEpisode : VideoPlayerIntent
 

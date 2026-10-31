@@ -3,7 +3,9 @@ package io.legado.app.model
 import android.annotation.SuppressLint
 import androidx.annotation.VisibleForTesting
 import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.datasource.HttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import io.legado.app.R
 import io.legado.app.constant.PreferKey
@@ -156,9 +158,31 @@ object VideoPlay : CoroutineScope by MainScope() {
                 upDurIndex(1)
             }
         }
+
+        override fun onPlayerError(error: PlaybackException) {
+            // 播放器错误此前没人接收，表现是「播到一半卡住且没有任何提示」
+            val cause = error.cause
+            val failedUrl = (cause as? HttpDataSource.HttpDataSourceException)
+                ?.dataSpec?.uri?.toString()
+            val detail = buildString {
+                append(error.errorCodeName)
+                failedUrl?.takeIf { it.isNotBlank() }?.let { append(" · ").append(it) }
+                cause?.message?.takeIf { it.isNotBlank() }?.let { append(" · ").append(it) }
+            }
+            _state.update {
+                it.copy(
+                    isLoading = false,
+                    isPlaying = false,
+                    error = detail,
+                )
+            }
+        }
     }
 
     private var isReleasing = false
+
+    /** 当前会话目标（书/RSS 文章/直链）的唯一标识，用于识别「换视频」而不是退出页面后续播。 */
+    private var sessionKey: String? = null
 
     // ——————————————————————————— 播放设置 ———————————————————————————
 
@@ -182,6 +206,16 @@ object VideoPlay : CoroutineScope by MainScope() {
         get() = (AppConfigStore.getInt(PreferKey.videoPlaySpeed) ?: 100) / 100f
         set(value) = AppConfigStore.putInt(PreferKey.videoPlaySpeed, (value * 100).toInt())
 
+    /** 快进/倒退按钮的步长，单位秒；默认 15 秒。 */
+    var seekStepSeconds: Int
+        get() = AppConfigStore.getInt(PreferKey.videoSeekStep) ?: 15
+        set(value) = AppConfigStore.putInt(PreferKey.videoSeekStep, value)
+
+    /** 横向滑动调进度：拖多少屏宽等于整段时长，值越大越迟钝；默认 6 屏。 */
+    var seekScreensPerDuration: Float
+        get() = AppConfigStore.getFloat(PreferKey.videoSeekSensitivity) ?: 6f
+        set(value) = AppConfigStore.putFloat(PreferKey.videoSeekSensitivity, value)
+
     var danmakuShow: Boolean
         get() = AppConfigStore.getInt(PreferKey.videoDanmakuShow) != 0
         set(value) = AppConfigStore.putInt(PreferKey.videoDanmakuShow, if (value) 1 else 0)
@@ -193,8 +227,55 @@ object VideoPlay : CoroutineScope by MainScope() {
 
     // ——————————————————————————— 会话入口 ———————————————————————————
 
+    /**
+     * 换目标时先收尾上一场会话：保存进度、回调书源、停播并清空播放器与字段。
+     *
+     * 退出播放页后继续播放是预期行为，所以只有 [sessionKey] 变化时才停；
+     * 不停的话旧视频的声音/最后一帧会一直残留到新视频解析完成，解析失败时更是停不下来。
+     */
+    private fun beginSession(key: String) {
+        if (sessionKey != null && sessionKey != key) {
+            closeCurrentSession()
+        }
+        sessionKey = key
+    }
+
+    private fun closeCurrentSession() {
+        // 没有加载出媒体时播放器位置不可信，沿用会话进度，避免把旧进度写成 0
+        val hasNoMedia = (playerInstance?.mediaItemCount ?: 0) == 0
+        saveRead(if (hasNoMedia) durChapterPos else null)
+        val previousBook = book
+        if (previousBook != null && inBookshelf) {
+            SourceCallBack.callBackBook(SourceCallBack.END_READ, bookSource, previousBook, chapter)
+        }
+        isReleasing = true
+        playerInstance?.let {
+            it.stop()
+            it.clearMediaItems()
+        }
+        isReleasing = false
+        book = null
+        bookSource = null
+        toc = emptyList()
+        volumes = emptyList()
+        episodes = emptyList()
+        chapter = null
+        durVolumeIndex = 0
+        chapterInVolumeIndex = 0
+        durChapterPos = 0
+        inBookshelf = true
+        videoTitle = null
+        playUrl = null
+        danmaku = null
+        singleUrl = false
+        rssStar = null
+        sessionKey = null
+        _state.value = VideoPlayState()
+    }
+
     /** 打开书架中的视频书：补齐详情/目录，恢复上次进度并开始播放。 */
     suspend fun openBook(bookUrl: String, autoPlay: Boolean = this.autoPlay) {
+        beginSession("book:$bookUrl")
         singleUrl = false
         _state.update { it.copy(isLoading = true, error = null) }
         val prepared = withContext(Dispatchers.IO) {
@@ -267,6 +348,7 @@ object VideoPlay : CoroutineScope by MainScope() {
      * 进度优先记在该文章的收藏上，未收藏时按链接记缓存。
      */
     suspend fun openRssArticle(article: RssArticle) {
+        beginSession("rss:${article.origin}|${article.link}|${article.sort}")
         // 路由只带 origin/link/sort/title，正文与变量从库里补全
         val target = withContext(Dispatchers.IO) {
             appDb.rssArticleDao.get(article.origin, article.link, article.sort)
@@ -505,6 +587,14 @@ object VideoPlay : CoroutineScope by MainScope() {
         player.seekTo(positionMs.coerceAtLeast(0))
     }
 
+    /** 快进 / 倒退固定步长：正数前进、负数后退，夹在 0 与总时长之间。 */
+    fun seekBy(seconds: Int) {
+        val position = runCatching { player.currentPosition }.getOrDefault(0L)
+        val duration = runCatching { player.duration }.getOrDefault(0L)
+        val target = (position + seconds * 1000L).coerceAtLeast(0L)
+        player.seekTo(if (duration > 0) target.coerceAtMost(duration) else target)
+    }
+
     // ——————————————————————————— 进度与收尾 ———————————————————————————
 
     /** 落库进度；无书籍上下文时按播放地址记缓存（临时直链）。 */
@@ -566,6 +656,7 @@ object VideoPlay : CoroutineScope by MainScope() {
         linkCache.clear()
         preloadingKeys.clear()
         rssStar = null
+        sessionKey = null
         launch(Dispatchers.IO) { contentRepository.clearTempFiles() }
         _state.update { VideoPlayState() }
         isReleasing = false

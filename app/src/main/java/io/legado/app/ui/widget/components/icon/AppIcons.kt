@@ -11,6 +11,8 @@ import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Explore
+import androidx.compose.material.icons.filled.FastForward
+import androidx.compose.material.icons.filled.FastRewind
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.History
@@ -139,6 +141,14 @@ object AppIcons {
     val Next: ImageVector
         @Composable
         get() = Icons.Default.SkipNext
+
+    val Rewind: ImageVector
+        @Composable
+        get() = Icons.Default.FastRewind
+
+    val FastForward: ImageVector
+        @Composable
+        get() = Icons.Default.FastForward
 
     val Speed: ImageVector
         @Composable

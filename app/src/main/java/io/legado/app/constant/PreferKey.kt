@@ -197,6 +197,8 @@ object PreferKey {
     const val videoPlaySpeed = "videoPlaySpeed"
     const val videoDanmakuShow = "videoDanmakuShow"
     const val videoFloatingEnabled = "videoFloatingEnabled"
+    const val videoSeekStep = "videoSeekStep"
+    const val videoSeekSensitivity = "videoSeekSensitivity"
     const val brightnessVwPos = "brightnessVwPos"
     const val readBrightnessControlPosition = "readBrightnessControlPosition"
     const val brightnessAuto = "brightnessAuto"

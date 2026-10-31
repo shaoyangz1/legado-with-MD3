@@ -140,14 +140,23 @@ fun Book.contains(word: String?): Boolean {
             || intro?.contains(word) == true
 }
 
+/** 标签里单独一个 `|` 表示换行：详情页按它把标签拆成多行展示。 */
+const val TAG_ROW_BREAK = "|"
+
 fun Book.getSourceTagList(): List<String> =
-    kind?.splitNotBlank(",", "\n").orEmpty().distinct()
+    kind?.splitNotBlank(",", "\n")?.toList().orEmpty().distinctKeepingRowBreaks()
 
 fun Book.getCustomTagList(): List<String> =
-    customTag?.splitNotBlank(",", "\n").orEmpty().distinct()
+    customTag?.splitNotBlank(",", "\n")?.toList().orEmpty().distinctKeepingRowBreaks()
 
 fun Book.getDisplayTagList(): List<String> =
-    (getCustomTagList() + getSourceTagList()).distinct()
+    (getCustomTagList() + getSourceTagList()).distinctKeepingRowBreaks()
+
+/** 普通标签去重，换行标记不去重：多个 `|` 才能拆出多行。 */
+private fun List<String>.distinctKeepingRowBreaks(): List<String> {
+    val seen = mutableSetOf<String>()
+    return filter { it == TAG_ROW_BREAK || seen.add(it) }
+}
 
 /**
  * 仅在目标bookUrl未被其他书占用，或判定为同一本书时，允许迁移主键。
@@ -376,7 +385,8 @@ fun Book.upKind() {
         }
     }
 
-    kind = kinds.distinct().joinToString(",")
+    // 换行标记不能去重，否则书源给的多行标签会被压成一行
+    kind = kinds.distinctKeepingRowBreaks().joinToString(",")
 }
 
 fun parseHighlightedTags(

@@ -682,6 +682,9 @@
     <string name="video_gesture_lock">鎖定手勢</string>
     <string name="video_gesture_unlock">解鎖手勢</string>
     <string name="video_seek_step">跳轉時長 %1$d 秒</string>
+    <string name="video_seek_sensitivity">滑動調進度靈敏度</string>
+    <string name="video_rewind">倒退</string>
+    <string name="video_fast_forward">快轉</string>
     <string name="open_other_video_player">用其他播放器開啟</string>
     <string name="select_episode">選集</string>
     <string name="config_settings">播放設定</string>

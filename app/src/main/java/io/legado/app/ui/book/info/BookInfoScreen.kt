@@ -113,6 +113,7 @@ import io.legado.app.data.entities.BookGroup
 import io.legado.app.data.entities.BookSource
 import io.legado.app.data.entities.SearchBook
 import io.legado.app.help.WebCacheManager
+import io.legado.app.help.book.TAG_ROW_BREAK
 import io.legado.app.help.coil.CoverExtras
 import io.legado.app.help.webView.WebJsExtensions
 import io.legado.app.ui.association.OnLineImportActivity
@@ -125,7 +126,6 @@ import io.legado.app.ui.theme.ProvideColorSchemeOverride
 import io.legado.app.ui.theme.ThemeOverrideState
 import io.legado.app.ui.theme.ThemeResolver
 import io.legado.app.ui.theme.animateColorSchemeAsState
-import io.legado.app.ui.theme.fadingEdge
 import io.legado.app.ui.theme.rememberImageSeedColor
 import io.legado.app.ui.theme.rememberThemeOverride
 import io.legado.app.ui.theme.responsiveHazeEffectFixedStyle
@@ -1402,36 +1402,40 @@ private fun BookInfoHeader(
                     thickness = 20.dp
                 )
             } else if (kindLabels.isNotEmpty() || !groupNames.isNullOrBlank()) {
-                val kindListState = rememberLazyListState()
-                LazyRow(
-                    state = kindListState,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .fadingEdge(kindListState),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    groupNames?.takeIf { it.isNotBlank() }?.let {
-                        item(key = "group-$it") {
-                            TextCard(
-                                text = stringResource(R.string.group_s, it),
-                                textStyle = LegadoTheme.typography.labelLargeEmphasized,
-                                backgroundColor = LegadoTheme.colorScheme.surfaceContainer,
-                                contentColor = LegadoTheme.colorScheme.onSurfaceVariant,
-                            )
+                // 标签里单独一个 `|` 表示换行；每行内部仍横向滚动，未自定义时就是一行
+                val tagRows = remember(kindLabels) { splitKindTagRows(kindLabels) }
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    tagRows.forEachIndexed { rowIndex, row ->
+                        LazyRow(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            if (rowIndex == 0) {
+                                groupNames?.takeIf { it.isNotBlank() }?.let {
+                                    item(key = "group-$it") {
+                                        TextCard(
+                                            text = stringResource(R.string.group_s, it),
+                                            textStyle = LegadoTheme.typography.labelLargeEmphasized,
+                                            backgroundColor = LegadoTheme.colorScheme.surfaceContainer,
+                                            contentColor = LegadoTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                                }
+                            }
+                            itemsIndexed(
+                                items = row,
+                                key = { index, label -> "kind-$rowIndex-$index-$label" }
+                            ) { _, label ->
+                                val (labelText, labelUrl) = parseKindTagLabel(label)
+                                TextCard(
+                                    text = labelText,
+                                    textStyle = LegadoTheme.typography.labelLargeEmphasized,
+                                    backgroundColor = LegadoTheme.colorScheme.surfaceContainer,
+                                    contentColor = LegadoTheme.colorScheme.onSurfaceVariant,
+                                    onClick = labelUrl?.let { url -> { onKindClick(labelText, url) } },
+                                )
+                            }
                         }
-                    }
-                    itemsIndexed(
-                        items = kindLabels,
-                        key = { index, label -> "kind-$index-$label" }
-                    ) { _, label ->
-                        val (labelText, labelUrl) = parseKindTagLabel(label)
-                        TextCard(
-                            text = labelText,
-                            textStyle = LegadoTheme.typography.labelLargeEmphasized,
-                            backgroundColor = LegadoTheme.colorScheme.surfaceContainer,
-                            contentColor = LegadoTheme.colorScheme.onSurfaceVariant,
-                            onClick = labelUrl?.let { url -> { onKindClick(labelText, url) } },
-                        )
                     }
                 }
             }
@@ -2544,6 +2548,25 @@ private fun EventInfoCard(
  * kind 标签支持「显示名|链接」编码，链接必须是 http(s) 绝对地址或根相对路径；
  * 后半段不像链接时整段按普通文本展示，避免存量 kind 里合法的 `|` 被误拆或误跳转。
  */
+/**
+ * 按单独的 `|` 标记把标签拆成多行；没有标记时就是一行。
+ * 连续分隔符或首尾分隔符产生的空行会被丢掉。
+ */
+internal fun splitKindTagRows(labels: List<String>): List<List<String>> {
+    val rows = mutableListOf<MutableList<String>>()
+    var current = mutableListOf<String>()
+    labels.forEach { label ->
+        if (label == TAG_ROW_BREAK) {
+            rows.add(current)
+            current = mutableListOf()
+        } else {
+            current.add(label)
+        }
+    }
+    rows.add(current)
+    return rows.filter { it.isNotEmpty() }.ifEmpty { listOf(emptyList()) }
+}
+
 internal fun parseKindTagLabel(label: String): Pair<String, String?> {
     val separator = label.indexOf('|')
     if (separator <= 0 || separator == label.lastIndex) return label to null

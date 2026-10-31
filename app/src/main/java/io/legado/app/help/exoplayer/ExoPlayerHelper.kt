@@ -22,8 +22,11 @@ import io.legado.app.help.http.okHttpClient
 import io.legado.app.utils.GSON
 import io.legado.app.utils.externalCache
 import okhttp3.CacheControl
+import okhttp3.Dns
 import splitties.init.appCtx
 import java.io.File
+import java.net.Inet4Address
+import java.net.InetAddress
 import java.util.concurrent.TimeUnit
 
 
@@ -109,6 +112,15 @@ object ExoPlayerHelper {
     private val okhttpDataFactory by lazy {
         val client = okHttpClient.newBuilder()
             .callTimeout(0, TimeUnit.SECONDS)
+            // 部分网络下 DNS 会返回不可用的 IPv6（伪造/污染地址），浏览器会回退，
+            // OkHttp 却直接失败。有 IPv4 时只走 IPv4，纯 IPv6 站点仍用原解析结果。
+            .dns(object : Dns {
+                override fun lookup(hostname: String): List<InetAddress> {
+                    val addresses = Dns.SYSTEM.lookup(hostname)
+                    val ipv4 = addresses.filterIsInstance<Inet4Address>()
+                    return ipv4.ifEmpty { addresses }
+                }
+            })
             .build()
         OkHttpDataSource.Factory(client)
             .setCacheControl(CacheControl.Builder().maxAge(1, TimeUnit.DAYS).build())

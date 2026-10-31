@@ -97,6 +97,8 @@ class VideoPlayerViewModel : ViewModel() {
                 autoPlay = VideoPlay.autoPlay,
                 startFull = VideoPlay.startFull,
                 longPressSpeed = VideoPlay.longPressSpeed,
+                seekStep = VideoPlay.seekStepSeconds,
+                seekScreens = VideoPlay.seekScreensPerDuration,
                 showDanmaku = VideoPlay.danmakuShow,
                 floatingEnabled = VideoPlay.floatingEnabled,
             )
@@ -133,6 +135,15 @@ class VideoPlayerViewModel : ViewModel() {
             }
 
             is VideoPlayerIntent.SeekTo -> VideoPlay.seekTo(intent.positionMs)
+            is VideoPlayerIntent.SeekBy -> VideoPlay.seekBy(intent.seconds)
+            is VideoPlayerIntent.SetSeekStep -> {
+                VideoPlay.seekStepSeconds = intent.seconds
+                _uiState.update { it.copy(seekStep = intent.seconds) }
+            }
+            is VideoPlayerIntent.SetSeekScreens -> {
+                VideoPlay.seekScreensPerDuration = intent.value
+                _uiState.update { it.copy(seekScreens = intent.value) }
+            }
             VideoPlayerIntent.PreviousEpisode -> VideoPlay.upDurIndex(-1)
             VideoPlayerIntent.NextEpisode -> VideoPlay.upDurIndex(1)
             is VideoPlayerIntent.SelectVolume -> {

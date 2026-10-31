@@ -780,6 +780,9 @@
     <string name="video_gesture_lock">Lock gestures</string>
     <string name="video_gesture_unlock">Unlock gestures</string>
     <string name="video_seek_step">Seek step %1$d seconds</string>
+    <string name="video_seek_sensitivity">Swipe seek sensitivity</string>
+    <string name="video_rewind">Rewind</string>
+    <string name="video_fast_forward">Fast forward</string>
     <string name="open_other_video_player">Open in other player</string>
     <string name="select_episode">Episodes</string>
     <string name="config_settings">Settings</string>
