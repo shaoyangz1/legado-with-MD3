@@ -77,6 +77,54 @@ class ExploreShowPageParamTest {
     }
 
     @Test
+    fun replacesExistingPathPageInTagUrl() {
+        assertEquals(
+            "https://example.com/t/87/page/3/",
+            "https://example.com/t/87/page/2/".withPageParam(3, "/page/{page}/"),
+        )
+    }
+
+    @Test
+    fun appendsPathPageWhenTagUrlHasNone() {
+        assertEquals(
+            "https://example.com/t/87/page/3/",
+            "https://example.com/t/87/".withPageParam(3, "/page/{page}/"),
+        )
+    }
+
+    @Test
+    fun replacesDashPageInTagUrl() {
+        assertEquals(
+            "https://example.com/t/87-3/",
+            "https://example.com/t/87-2/".withPageParam(3, "-{page}/"),
+        )
+    }
+
+    @Test
+    fun appendsDashPageWhenTagUrlHasNone() {
+        assertEquals(
+            "https://example.com/t/87-3/",
+            "https://example.com/t/87".withPageParam(3, "-{page}/"),
+        )
+    }
+
+    @Test
+    fun replacesTrailingPageInPath() {
+        assertEquals(
+            "https://example.com/type/tag/2/",
+            "https://example.com/type/tag/1/".withPageParam(2, "/{page}/"),
+        )
+    }
+
+    @Test
+    fun replacesLastNumericSegmentNotEarlierDigits() {
+        assertEquals(
+            "https://example.com/type/2d/3/",
+            "https://example.com/type/2d/1/".withPageParam(3, "/{page}/"),
+        )
+    }
+
+    @Test
     fun skipsPageRangeRuleUrl() {
         val url = "https://example.com/list-<1,9,99>.html"
         assertEquals(url, url.withPageParam(2, "page"))

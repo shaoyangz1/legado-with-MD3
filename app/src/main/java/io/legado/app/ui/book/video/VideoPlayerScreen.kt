@@ -12,6 +12,8 @@ import android.view.LayoutInflater
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.LocalActivity
 import androidx.appcompat.app.AppCompatActivity
+import androidx.compose.animation.AnimatedVisibilityScope
+import androidx.compose.animation.SharedTransitionScope
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateDpAsState
@@ -150,6 +152,23 @@ private const val VIDEO_CONTROLS_FADE_MILLIS = 180
 /** 横向拖动多少屏宽才相当于整段视频时长；值越大，进度变化越迟钝。 */
 private const val DEFAULT_SEEK_SCREENS_PER_DURATION = 6f
 
+/** 播放页首帧就确定封面布局比例，避免图片加载回调改变高度造成上下留白跳动。 */
+internal fun videoPlayerInitialCoverAspectRatio(cachedRatio: Float?): Float =
+    cachedRatio?.takeIf { it.isFinite() && it > 0f } ?: (5f / 7f)
+
+/** 等目标书的播放会话准备好之前，忽略 VideoPlay 单例中残留的上一册封面。 */
+internal fun resolveVideoCoverUrl(
+    requestedBookUrl: String?,
+    sessionBookUrl: String,
+    sessionCoverUrl: String,
+    fallbackCoverUrl: String?,
+): String = when {
+    requestedBookUrl.isNullOrBlank() -> fallbackCoverUrl.orEmpty()
+    requestedBookUrl != sessionBookUrl -> fallbackCoverUrl.orEmpty()
+    sessionCoverUrl.isNotBlank() -> sessionCoverUrl
+    else -> fallbackCoverUrl.orEmpty()
+}
+
 /** 纵向拖动时屏幕上显示的亮度/音量指示。 */
 @Stable
 private sealed interface VideoMediaOverlay {
@@ -186,6 +205,12 @@ fun VideoPlayerScreen(
     onBack: () -> Unit,
     onOpenSourceLogin: (String) -> Unit = {},
     onOpenSourceEdit: (String) -> Unit = {},
+    /** 详情页已加载到的封面：首帧先用它，避免先闪默认封面再刷新。 */
+    initialCoverPath: String? = null,
+    /** 与详情页共用的封面共享元素 key：封面从详情页平滑飞入。 */
+    sharedCoverKey: String? = null,
+    sharedTransitionScope: SharedTransitionScope? = null,
+    animatedVisibilityScope: AnimatedVisibilityScope? = null,
     viewModel: VideoPlayerViewModel = koinViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -649,6 +674,11 @@ fun VideoPlayerScreen(
                         .fillMaxWidth()
                         .weight(1f),
                     state = state,
+                    requestedBookUrl = bookUrl,
+                    fallbackCoverUrl = initialCoverPath,
+                    sharedCoverKey = sharedCoverKey,
+                    sharedTransitionScope = sharedTransitionScope,
+                    animatedVisibilityScope = animatedVisibilityScope,
                     onIntent = viewModel::onIntent,
                 )
             }
@@ -965,6 +995,11 @@ private fun PlayerResizeHandle(
 private fun VideoBottomPanel(
     modifier: Modifier,
     state: VideoPlayerUiState,
+    requestedBookUrl: String?,
+    fallbackCoverUrl: String? = null,
+    sharedCoverKey: String? = null,
+    sharedTransitionScope: SharedTransitionScope? = null,
+    animatedVisibilityScope: AnimatedVisibilityScope? = null,
     onIntent: (VideoPlayerIntent) -> Unit,
 ) {
     Column(
@@ -975,7 +1010,14 @@ private fun VideoBottomPanel(
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         Column(modifier = Modifier.fillMaxWidth()) {
-            BookHeader(state)
+            BookHeader(
+                state = state,
+                requestedBookUrl = requestedBookUrl,
+                fallbackCoverUrl = fallbackCoverUrl,
+                sharedCoverKey = sharedCoverKey,
+                sharedTransitionScope = sharedTransitionScope,
+                animatedVisibilityScope = animatedVisibilityScope,
+            )
             Spacer(Modifier.height(16.dp))
             AppText(
                 text = stringResource(R.string.book_intro),
@@ -1002,28 +1044,57 @@ private fun VideoBottomPanel(
 
 /** 封面居中，书名/作者/书源/当前章节另起一行，与详情页布局一致。 */
 @Composable
-private fun BookHeader(state: VideoPlayerUiState) {
+private fun BookHeader(
+    state: VideoPlayerUiState,
+    requestedBookUrl: String?,
+    fallbackCoverUrl: String? = null,
+    sharedCoverKey: String? = null,
+    sharedTransitionScope: SharedTransitionScope? = null,
+    animatedVisibilityScope: AnimatedVisibilityScope? = null,
+) {
     // 与详情页一致：宽度取屏宽减去左右边距，高度按封面真实比例。
     // 不按固定 5:7 给高度的话，Fit 会在上下留出大片空白。
     val coverWidth = (LocalConfiguration.current.screenWidthDp - 32f).coerceAtMost(360f)
-    var coverRatio by remember(state.coverUrl) {
-        mutableStateOf(cachedCoverAspectRatio(state.coverUrl))
+    // 会话数据还没回来时先用详情页带过来的封面，避免首帧闪默认封面
+    val effectiveCover = resolveVideoCoverUrl(
+        requestedBookUrl = requestedBookUrl,
+        sessionBookUrl = state.bookUrl,
+        sessionCoverUrl = state.coverUrl,
+        fallbackCoverUrl = fallbackCoverUrl,
+    )
+    // 进播放页时固定布局比例；图片加载回调只更新缓存，不再改当前屏幕高度。
+    val coverRatio = remember {
+        videoPlayerInitialCoverAspectRatio(cachedCoverAspectRatio(effectiveCover))
     }
-    val safeRatio = coverRatio?.takeIf { it.isFinite() && it > 0f } ?: (5f / 7f)
+    // 封面地址被详情数据替换时，先把旧图当作占位，等新图加载完再切，避免闪一下空白
+    var lastCoverUrl by remember { mutableStateOf<String?>(null) }
+    var retainedCover by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(effectiveCover) {
+        val previous = lastCoverUrl
+        if (previous != null && effectiveCover.isNotBlank() && previous != effectiveCover) {
+            retainedCover = previous
+        }
+        lastCoverUrl = effectiveCover
+    }
+    val safeRatio = coverRatio
     val coverHeight by animateDpAsState(
         targetValue = (coverWidth / safeRatio).dp,
         animationSpec = tween(350, easing = FastOutSlowInEasing),
         label = "videoCoverHeight",
     )
     Column(modifier = Modifier.fillMaxWidth()) {
-        if (state.coverUrl.isNotBlank()) {
+        if (effectiveCover.isNotBlank()) {
             CoilBookCover(
                 name = state.bookName,
                 author = state.author,
-                path = state.coverUrl,
+                path = effectiveCover,
                 bookUrl = state.bookUrl,
+                placeholderCoverPath = retainedCover,
+                onLoadFinish = { retainedCover = null },
+                sharedTransitionScope = sharedTransitionScope,
+                animatedVisibilityScope = animatedVisibilityScope,
+                sharedCoverKey = sharedCoverKey,
                 contentScale = ContentScale.Fit,
-                onImageAspectRatio = { coverRatio = it },
                 modifier = Modifier
                     .width(coverWidth.dp)
                     .height(coverHeight)
@@ -1602,7 +1673,15 @@ private fun VideoSettingsSheet(
         onDismissRequest = onDismiss,
         title = stringResource(R.string.config_settings),
     ) {
-        Column(modifier = Modifier.fillMaxWidth()) {
+        // 横屏可用高度很矮，设置项（尤其展开后的滑块）会超出屏幕，
+        // 内容必须能滚动，否则下面的项点不到
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .navigationBarsPadding()
+                .padding(bottom = 16.dp),
+        ) {
             TinySwitchSettingItem(
                 title = stringResource(R.string.video_auto_play),
                 checked = autoPlay,

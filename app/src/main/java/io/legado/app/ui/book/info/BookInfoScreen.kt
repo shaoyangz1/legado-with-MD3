@@ -29,7 +29,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -347,10 +346,20 @@ private fun BookInfoScreenContent(
             // 未验证时不提供"直接开始阅读"的入口，避免绕过验证
             if (!state.privateLocked) {
                 val isVideo = state.book?.let { it.type and BookType.video != 0 } == true
+                // 视频详情还没加载完时禁跳播放页：先置灰，点了由 ViewModel 提示等待
+                val playReady = !isVideo || (!state.isBusy && !state.isTocLoading)
                 ExtendedFloatingActionButton(
                     onClick = { onIntent(BookInfoIntent.ReadClick) },
-                    containerColor = LegadoTheme.colorScheme.primaryContainer,
-                    contentColor = LegadoTheme.colorScheme.onPrimaryContainer,
+                    containerColor = if (playReady) {
+                        LegadoTheme.colorScheme.primaryContainer
+                    } else {
+                        LegadoTheme.colorScheme.surfaceContainerHighest
+                    },
+                    contentColor = if (playReady) {
+                        LegadoTheme.colorScheme.onPrimaryContainer
+                    } else {
+                        LegadoTheme.colorScheme.onSurfaceVariant
+                    },
                     icon = { AppIcon(if (isVideo) Icons.Default.PlayArrow else Icons.Default.Book, null) },
                     text = { AppText(stringResource(if (isVideo) R.string.audio_play else R.string.reading)) },
                 )
@@ -1347,16 +1356,22 @@ private fun BookInfoHeader(
                         }
             if (!locked) {
                 val authorLabels = remember(book.realAuthor) {
-                    book.realAuthor.split(",", "，")
+                    book.realAuthor.split(",", "，", "\n")
                         .map { it.trim() }
                         .filter { it.isNotBlank() }
                 }
                 if (authorLabels.size > 1) {
-                    FlowRow(
-                        modifier = Modifier.padding(top = 8.dp),
+                    // 多作者排成一行横向滚动，与标签行保持一致
+                    LazyRow(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 8.dp),
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
-                        authorLabels.forEach { author ->
+                        itemsIndexed(
+                            items = authorLabels,
+                            key = { index, author -> "author-$index-$author" },
+                        ) { _, author ->
                             AnimatedTextLine(
                                 text = author,
                                 style = LegadoTheme.typography.bodyLarge,

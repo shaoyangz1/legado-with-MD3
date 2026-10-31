@@ -1233,6 +1233,10 @@ fun MainActivity.mainEntryProvider(
                 VideoPlayerScreen(
                     bookUrl = bookUrl,
                     rssArticle = rssArticle,
+                    initialCoverPath = route.coverPath,
+                    sharedCoverKey = route.sharedCoverKey,
+                    sharedTransitionScope = sharedTransitionScope,
+                    animatedVisibilityScope = LocalNavAnimatedContentScope.current,
                     onBack = exitVideoRoute,
                     onOpenSourceLogin = { sourceUrl ->
                         onNavigateToRoute(
@@ -1561,11 +1565,13 @@ fun MainActivity.mainEntryProvider(
                     )
                 )
             },
-            onOpenVideoPlayer = { bookUrl, inBookshelf ->
+            onOpenVideoPlayer = { bookUrl, inBookshelf, coverPath, sharedKey ->
                 onNavigateToRoute(
                     MainRouteVideoPlay(
                         bookUrl = bookUrl,
                         inBookshelf = inBookshelf,
+                        coverPath = coverPath,
+                        sharedCoverKey = sharedKey ?: bookCoverSharedElementKey(bookUrl),
                     )
                 )
             },

@@ -518,8 +518,22 @@ internal fun String?.withPageParam(page: Int, param: String): String? {
     val hashIndex = indexOf('#')
     val base = if (hashIndex >= 0) substring(0, hashIndex) else this
     val fragment = if (hashIndex >= 0) substring(hashIndex) else ""
-    // 路径式分页：pageParam 形如 "/page/{page}/"
-    if (param.startsWith("/") && param.contains("{page}")) {
+    // 路径/后缀式分页模板："/page/{page}/"、"-{page}/" 等
+    val tokenIndex = param.indexOf("{page}")
+    if (tokenIndex > 0) {
+        val prefix = param.substring(0, tokenIndex)
+        val suffix = param.substring(tokenIndex + "{page}".length)
+        // 标签地址本身就带页码（如 /t/87/page/2/、/t/87-2/、/type/xx/1/）：替换已有页码，不能追加
+        val existing = Regex(Regex.escape(prefix) + "\\d+")
+            .findAll(base)
+            .lastOrNull { match ->
+                val tail = base.substring(match.range.last + 1)
+                suffix.isEmpty() || tail.startsWith(suffix)
+            }
+        if (existing != null) {
+            val tail = base.substring(existing.range.last + 1)
+            return base.substring(0, existing.range.first) + prefix + page + tail + fragment
+        }
         return base.trimEnd('/') + param.replace("{page}", page.toString()) + fragment
     }
     val pattern = Regex("([?&])${Regex.escape(param)}=\\d+")

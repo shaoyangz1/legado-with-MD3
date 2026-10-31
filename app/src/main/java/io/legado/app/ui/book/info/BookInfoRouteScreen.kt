@@ -66,7 +66,12 @@ fun BookInfoRouteScreen(
     onOpenReader: (bookUrl: String, inBookshelf: Boolean, chapterChanged: Boolean) -> Unit = { _, _, _ -> },
     onOpenMangaReader: (bookUrl: String, inBookshelf: Boolean, chapterChanged: Boolean) -> Unit = { _, _, _ -> },
     onOpenAudioPlay: (bookUrl: String, inBookshelf: Boolean) -> Unit = { _, _ -> },
-    onOpenVideoPlayer: (bookUrl: String, inBookshelf: Boolean) -> Unit = { _, _ -> },
+    onOpenVideoPlayer: (
+        bookUrl: String,
+        inBookshelf: Boolean,
+        coverPath: String?,
+        sharedCoverKey: String?,
+    ) -> Unit = { _, _, _, _ -> },
     onNavigateToBookInfo: (name: String?, author: String?, bookUrl: String, origin: String?, coverPath: String?) -> Unit = { _, _, _, _, _ -> },
     onNavigateToExploreShow: (title: String?, sourceUrl: String, exploreUrl: String?, usePageParamFallback: Boolean) -> Unit = { _, _, _, _ -> },
     onOpenCharacterDetail: (bookUrl: String, characterId: String?) -> Unit = { _, _ -> },
@@ -143,7 +148,9 @@ fun BookInfoRouteScreen(
                     when {
                         effect.book.isVideo -> onOpenVideoPlayer(
                             effect.book.bookUrl,
-                            effect.inBookshelf
+                            effect.inBookshelf,
+                            effect.book.coverUrl,
+                            sharedCoverKey,
                         )
 
                         effect.book.isAudio -> onOpenAudioPlay(

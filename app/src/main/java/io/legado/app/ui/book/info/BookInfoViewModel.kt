@@ -57,6 +57,7 @@ import io.legado.app.help.book.getExportFileName
 import io.legado.app.help.book.isLocal
 import io.legado.app.help.book.isNotShelf
 import io.legado.app.help.book.isSameNameAuthor
+import io.legado.app.help.book.isVideo
 import io.legado.app.help.book.isWebFile
 import io.legado.app.help.book.parseHighlightedTags
 import io.legado.app.help.book.removeType
@@ -1403,7 +1404,16 @@ class BookInfoViewModel(
     }
 
     private fun onReadClick() {
-        val book = currentBook ?: return
+        val book = currentBook
+        if (book == null) {
+            showMessage(R.string.loading)
+            return
+        }
+        // 视频详情没加载完就跳播放页，播放页会用旧的/空的数据渲染，封面和目录都会刷新一次
+        if (book.isVideo && (_screenState.value.isBusy || _screenState.value.isTocLoading)) {
+            showMessage(R.string.loading)
+            return
+        }
         if (book.isWebFile) {
             setSheet(BookInfoSheet.WebFiles(openAfterImport = true))
         } else {

@@ -284,6 +284,9 @@ object VideoPlay : CoroutineScope by MainScope() {
                     ?: error(appCtx.getString(R.string.book_not_found))
                 val source = appDb.bookSourceDao.getBookSource(book.origin)
                     ?: error(appCtx.getString(R.string.source_not_found))
+                // 库里的书名/简介/封面先暴露给信息区，别等目录和详情加载完才渲染
+                this@VideoPlay.book = book
+                _state.update { it.copy(bookName = book.name) }
                 // 详情规则可能改写 bookUrl，换 URL 时要连带迁移旧章节
                 val oldBookUrl = book.bookUrl
                 // 书架直开视频书时可能还没有详情和目录（AddToBookshelfUseCase 只插书）

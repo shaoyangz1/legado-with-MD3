@@ -194,6 +194,10 @@ data class MainRouteVideoPlay(
     val rssLink: String? = null,
     val rssSort: String? = null,
     val rssTitle: String? = null,
+    /** 详情页已加载到的封面，播放页首帧先拿它占位，避免先闪默认封面再刷新。 */
+    val coverPath: String? = null,
+    /** 与详情页共用的封面共享元素 key，让封面从详情页平滑飞进播放页。 */
+    val sharedCoverKey: String? = null,
 ) : MainRoute
 
 @Serializable
