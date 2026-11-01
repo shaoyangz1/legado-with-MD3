@@ -3968,7 +3968,4 @@
     <string name="page_anim_ios_curl">iOS Curl</string>
     <string name="page_anim_google_curl">Google Curl</string>
     <string name="page_anim_parallax">Parallax</string>
-    <string name="magnet_name">Magnet</string>
-    <string name="magnet_size">Size</string>
-    <string name="magnet_date">Shared</string>
 </resources>

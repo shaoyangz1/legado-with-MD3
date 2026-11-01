@@ -1786,16 +1786,24 @@ private fun BookInfoIntro(
             style = LegadoTheme.typography.bodyMedium,
         )
 
-        is BookInfoIntroContent.Magnet -> MagnetTable(
-            entries = c.entries,
+        is BookInfoIntroContent.Table -> BookInfoTable(
+            header = c.header,
+            rows = c.rows,
             onOpen = { context.openUrl(it) },
         )
     }
 }
 
-/** 简介里的磁力列表；名称单行省略，整行点击交给系统磁力播放器。 */
+/**
+ * 简介里的通用表格：第一行是表头，后续每行用 	 分隔；
+ * 行末多出一格时视为链接，整行点击打开。第一列自适应并单行省略，其余列定宽右对齐。
+ */
 @Composable
-private fun MagnetTable(entries: List<MagnetEntry>, onOpen: (String) -> Unit) {
+private fun BookInfoTable(
+    header: List<String>,
+    rows: List<BookInfoTableRow>,
+    onOpen: (String) -> Unit,
+) {
     Column(modifier = Modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier
@@ -1803,98 +1811,84 @@ private fun MagnetTable(entries: List<MagnetEntry>, onOpen: (String) -> Unit) {
                 .padding(vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            AppText(
-                text = stringResource(R.string.magnet_name),
-                modifier = Modifier.weight(1f),
-                style = LegadoTheme.typography.labelMedium,
-                color = LegadoTheme.colorScheme.onSurfaceVariant,
-            )
-            AppText(
-                text = stringResource(R.string.magnet_size),
-                modifier = Modifier.width(MAGNET_SIZE_COLUMN_WIDTH),
-                style = LegadoTheme.typography.labelMedium,
-                color = LegadoTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.End,
-            )
-            AppText(
-                text = stringResource(R.string.magnet_date),
-                modifier = Modifier.width(MAGNET_DATE_COLUMN_WIDTH),
-                style = LegadoTheme.typography.labelMedium,
-                color = LegadoTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.End,
-            )
+            header.forEachIndexed { index, title ->
+                AppText(
+                    text = title,
+                    modifier = if (index == 0) Modifier.weight(1f) else Modifier.width(TABLE_VALUE_COLUMN_WIDTH),
+                    style = LegadoTheme.typography.labelMedium,
+                    color = LegadoTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    textAlign = if (index == 0) TextAlign.Start else TextAlign.End,
+                )
+            }
         }
         HorizontalDivider(color = LegadoTheme.colorScheme.outlineVariant)
-        entries.forEach { entry ->
+        rows.forEach { row ->
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable { onOpen(entry.link) }
+                    .then(
+                        if (row.link != null) Modifier.clickable { onOpen(row.link) } else Modifier
+                    )
                     .padding(vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                AppText(
-                    text = entry.name,
-                    modifier = Modifier.weight(1f),
-                    style = LegadoTheme.typography.bodyMedium,
-                    color = LegadoTheme.colorScheme.primary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                AppText(
-                    text = entry.size,
-                    modifier = Modifier.width(MAGNET_SIZE_COLUMN_WIDTH),
-                    style = LegadoTheme.typography.bodySmall,
-                    color = LegadoTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    textAlign = TextAlign.End,
-                )
-                AppText(
-                    text = entry.date,
-                    modifier = Modifier.width(MAGNET_DATE_COLUMN_WIDTH),
-                    style = LegadoTheme.typography.bodySmall,
-                    color = LegadoTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    textAlign = TextAlign.End,
-                )
+                row.cells.forEachIndexed { index, cell ->
+                    AppText(
+                        text = cell,
+                        modifier = if (index == 0) Modifier.weight(1f) else Modifier.width(TABLE_VALUE_COLUMN_WIDTH),
+                        style = if (index == 0) {
+                            LegadoTheme.typography.bodyMedium
+                        } else {
+                            LegadoTheme.typography.bodySmall
+                        },
+                        color = if (index == 0) {
+                            LegadoTheme.colorScheme.primary
+                        } else {
+                            LegadoTheme.colorScheme.onSurfaceVariant
+                        },
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        textAlign = if (index == 0) TextAlign.Start else TextAlign.End,
+                    )
+                }
             }
             HorizontalDivider(color = LegadoTheme.colorScheme.outlineVariant)
         }
     }
 }
 
-private val MAGNET_SIZE_COLUMN_WIDTH = 76.dp
-private val MAGNET_DATE_COLUMN_WIDTH = 96.dp
+private val TABLE_VALUE_COLUMN_WIDTH = 80.dp
 
 private sealed interface BookInfoIntroContent {
     data class Web(val html: String) : BookInfoIntroContent
     data class Html(val html: String) : BookInfoIntroContent
     data class Markdown(val markdown: String) : BookInfoIntroContent
     data class Plain(val text: String) : BookInfoIntroContent
-    data class Magnet(val entries: List<MagnetEntry>) : BookInfoIntroContent
+    data class Table(
+        val header: List<String>,
+        val rows: List<BookInfoTableRow>,
+    ) : BookInfoIntroContent
 }
 
-private data class MagnetEntry(
-    val name: String,
-    val size: String,
-    val date: String,
-    val link: String,
-)
+private data class BookInfoTableRow(val cells: List<String>, val link: String?)
 
-/** 每行：名称 \t 大小 \t 日期 \t magnet 链接。 */
-private fun parseMagnetEntries(raw: String): List<MagnetEntry> =
-    raw.lineSequence().mapNotNull { line ->
-        val parts = line.split('\t')
-        if (parts.size < 4) return@mapNotNull null
-        val link = parts[3].trim()
-        if (link.isEmpty()) {
-            null
-        } else {
-            MagnetEntry(parts[0].trim(), parts[1].trim(), parts[2].trim(), link)
-        }
-    }.toList()
+/** 第一行表头；后续每行 tab 分隔，超出一格的最后一格作为行链接。 */
+private fun parseTableEntries(raw: String): BookInfoIntroContent.Table? {
+    val lines = raw.lineSequence().filter { it.isNotBlank() }.toList()
+    if (lines.size < 2) return null
+    val header = lines.first().split('	').map { it.trim() }
+    if (header.isEmpty()) return null
+    val rows = lines.drop(1).mapNotNull { line ->
+        val cells = line.split('	').map { it.trim() }
+        if (cells.size < header.size) return null
+        val link = cells.getOrNull(header.size)?.takeIf { it.isNotEmpty() }
+        BookInfoTableRow(cells.take(header.size), link)
+    }
+    if (rows.isEmpty()) return null
+    return BookInfoIntroContent.Table(header, rows)
+}
 
 /**
  * 解析简介前缀，与上游 showBookIntro 一致：
@@ -1922,13 +1916,14 @@ private fun parseBookInfoIntro(intro: String?): BookInfoIntroContent? {
             }
         }
 
-        intro.startsWith("<magnet>", ignoreCase = true) -> {
+        intro.startsWith("<table>", ignoreCase = true) -> {
             val lastIndex = intro.lastIndexOf("<")
-            if (lastIndex < 8) {
-                BookInfoIntroContent.Plain(HtmlFormatter.formatDisplayText(intro))
+            val table = if (lastIndex < 7) {
+                null
             } else {
-                BookInfoIntroContent.Magnet(parseMagnetEntries(intro.substring(8, lastIndex)))
+                parseTableEntries(intro.substring(7, lastIndex))
             }
+            table ?: BookInfoIntroContent.Plain(HtmlFormatter.formatDisplayText(intro))
         }
 
         intro.startsWith("<md>", ignoreCase = true) -> {
