@@ -53,6 +53,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
@@ -119,6 +120,7 @@ import io.legado.app.ui.widget.components.button.series.MediumTonalButton
 import io.legado.app.ui.widget.components.button.series.SmallTonalButton
 import io.legado.app.ui.widget.components.card.GlassCard
 import io.legado.app.ui.widget.components.card.NormalCard
+import io.legado.app.ui.widget.components.card.TextCard
 import io.legado.app.ui.widget.components.icon.AppIcon
 import io.legado.app.ui.widget.components.icon.AppIcons
 import io.legado.app.ui.widget.components.image.cover.CoilBookCover
@@ -206,6 +208,11 @@ private val VideoSize.isPortrait: Boolean
 fun VideoPlayerScreen(
     bookUrl: String? = null,
     rssArticle: RssArticle? = null,
+    /** 磁力播放：在播放页内解析文件列表，默认播放最大的那个。 */
+    magnetUrl: String? = null,
+    magnetTitle: String? = null,
+    magnetAuthor: String? = null,
+    magnetIntro: String? = null,
     onBack: () -> Unit,
     onOpenSourceLogin: (String) -> Unit = {},
     onOpenSourceEdit: (String) -> Unit = {},
@@ -218,6 +225,7 @@ fun VideoPlayerScreen(
     viewModel: VideoPlayerViewModel = koinViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val magnetState = viewModel.magnetState.collectAsStateWithLifecycle().value
     // 进度单独一条流：500ms 一拍。这里只拿 State、不在这里读值，
     // 读取下放到进度条那一小块，否则整页（含信息区）每 500ms 都要重组一次。
     val progressState = viewModel.progress.collectAsStateWithLifecycle(VideoPlaybackProgress())
@@ -264,8 +272,9 @@ fun VideoPlayerScreen(
     var playerHeightDp by remember { mutableStateOf<Float?>(null) }
     var draggingPlayerHeight by remember { mutableStateOf(false) }
 
-    LaunchedEffect(bookUrl, rssArticle) {
+    LaunchedEffect(bookUrl, rssArticle, magnetUrl) {
         when {
+            magnetUrl != null -> viewModel.initMagnet(magnetUrl, magnetTitle, magnetAuthor, magnetIntro)
             rssArticle != null -> viewModel.initRss(rssArticle)
             bookUrl != null -> viewModel.init(bookUrl)
         }
@@ -720,6 +729,10 @@ fun VideoPlayerScreen(
                     sharedCoverKey = sharedCoverKey,
                     sharedTransitionScope = sharedTransitionScope,
                     animatedVisibilityScope = animatedVisibilityScope,
+                    magnetState = magnetState,
+                    fallbackTitle = magnetTitle,
+                    onMagnetFileClick = viewModel::playMagnet,
+                    onMagnetRetry = viewModel::retryMagnet,
                     onIntent = viewModel::onIntent,
                 )
             }
@@ -1075,6 +1088,10 @@ private fun VideoBottomPanel(
     sharedCoverKey: String? = null,
     sharedTransitionScope: SharedTransitionScope? = null,
     animatedVisibilityScope: AnimatedVisibilityScope? = null,
+    magnetState: MagnetPanelState? = null,
+    fallbackTitle: String? = null,
+    onMagnetFileClick: (Int) -> Unit = {},
+    onMagnetRetry: () -> Unit = {},
     onIntent: (VideoPlayerIntent) -> Unit,
 ) {
     Column(
@@ -1084,11 +1101,20 @@ private fun VideoBottomPanel(
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
+        // 磁力文件条：在播放画面下方、封面标题上方，一行横向滑动
+        magnetState?.let {
+            MagnetFileRow(
+                state = it,
+                onFileClick = onMagnetFileClick,
+                onRetry = onMagnetRetry,
+            )
+        }
         Column(modifier = Modifier.fillMaxWidth()) {
             BookHeader(
                 state = state,
                 requestedBookUrl = requestedBookUrl,
                 fallbackCoverUrl = fallbackCoverUrl,
+                fallbackTitle = fallbackTitle,
                 sharedCoverKey = sharedCoverKey,
                 sharedTransitionScope = sharedTransitionScope,
                 animatedVisibilityScope = animatedVisibilityScope,
@@ -1117,12 +1143,75 @@ private fun VideoBottomPanel(
     }
 }
 
+/** 磁力文件条：与详情页标签一致，一行横向滑动，按体积从大到小。 */
+@Composable
+private fun MagnetFileRow(
+    state: MagnetPanelState,
+    onFileClick: (Int) -> Unit,
+    onRetry: () -> Unit,
+) {
+    when {
+        state.loading -> AppText(
+            text = stringResource(R.string.magnet_player_resolving),
+            style = LegadoTheme.typography.bodyMedium,
+            color = LegadoTheme.colorScheme.onSurfaceVariant,
+        )
+
+        state.files.isEmpty() && state.error != null -> Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            AppText(
+                text = state.error.orEmpty(),
+                modifier = Modifier.weight(1f),
+                style = LegadoTheme.typography.bodyMedium,
+                color = LegadoTheme.colorScheme.error,
+            )
+            TextCard(
+                text = stringResource(R.string.magnet_player_retry),
+                textStyle = LegadoTheme.typography.labelLargeEmphasized,
+                onClick = onRetry,
+            )
+        }
+
+        else -> LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(state.files, key = { it.index }) { file ->
+                val preparing = state.preparingIndex == file.index
+                val playing = state.playingIndex == file.index
+                TextCard(
+                    text = if (preparing) {
+                        "${file.name}  ${file.size}  ${
+                            stringResource(R.string.magnet_player_preparing)
+                        }"
+                    } else {
+                        "${file.name}  ${file.size}"
+                    },
+                    textStyle = LegadoTheme.typography.labelLargeEmphasized,
+                    backgroundColor = if (playing) {
+                        LegadoTheme.colorScheme.primaryContainer
+                    } else {
+                        LegadoTheme.colorScheme.surfaceContainer
+                    },
+                    contentColor = if (playing) {
+                        LegadoTheme.colorScheme.onPrimaryContainer
+                    } else {
+                        LegadoTheme.colorScheme.onSurfaceVariant
+                    },
+                    onClick = { onFileClick(file.index) },
+                )
+            }
+        }
+    }
+}
+
 /** 封面居中，书名/作者/书源/当前章节另起一行，与详情页布局一致。 */
 @Composable
 private fun BookHeader(
     state: VideoPlayerUiState,
     requestedBookUrl: String?,
     fallbackCoverUrl: String? = null,
+    fallbackTitle: String? = null,
     sharedCoverKey: String? = null,
     sharedTransitionScope: SharedTransitionScope? = null,
     animatedVisibilityScope: AnimatedVisibilityScope? = null,
@@ -1178,7 +1267,9 @@ private fun BookHeader(
             Spacer(Modifier.height(12.dp))
         }
         AppText(
-            text = state.bookName.ifBlank { stringResource(R.string.play_video) },
+            text = state.bookName.ifBlank {
+                fallbackTitle ?: stringResource(R.string.play_video)
+            },
             style = LegadoTheme.typography.titleLargeEmphasized,
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,

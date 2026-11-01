@@ -1204,7 +1204,7 @@ fun MainActivity.mainEntryProvider(
                 type = 2,
             )
         }
-        if (bookUrl == null && rssArticle == null) {
+        if (bookUrl == null && rssArticle == null && route.magnetUrl == null) {
             LaunchedEffect(Unit) { onNavigateBack() }
         } else {
             // 播放页是栈底时（深链、恢复的栈）不能落到 navigateBack 的 finish() 分支：
@@ -1222,17 +1222,16 @@ fun MainActivity.mainEntryProvider(
                     backStack.add(MainRouteHome)
                 }
             }
-            // 与阅读器入口一致：未授权时播放器不会被组合，也就不会初始化或显示书名/章节名
-            PrivateReadGate(
-                bookUrl = bookUrl ?: rssArticle!!.link,
-                onExit = exitVideoRoute,
-                onOpenLocalPasswordSettings = {
-                    onNavigateToRoute(MainRouteSettingsPrivate)
-                },
-            ) {
+            // 与阅读器入口一致：未授权时播放器不会被组合，也就不会初始化或显示书名/章节名。
+            // 直链（磁力文件）没有书籍上下文，不需要过私密内容闸门。
+            val playerContent: @Composable () -> Unit = {
                 VideoPlayerScreen(
                     bookUrl = bookUrl,
                     rssArticle = rssArticle,
+                    magnetUrl = route.magnetUrl,
+                    magnetTitle = route.magnetTitle,
+                    magnetAuthor = route.magnetAuthor,
+                    magnetIntro = route.magnetIntro,
                     initialCoverPath = route.coverPath,
                     sharedCoverKey = route.sharedCoverKey,
                     sharedTransitionScope = sharedTransitionScope,
@@ -1247,6 +1246,20 @@ fun MainActivity.mainEntryProvider(
                         onNavigateToRoute(MainRouteBookSourceEdit(sourceUrl))
                     },
                 )
+            }
+            val privateGateKey = bookUrl ?: rssArticle?.link
+            if (privateGateKey != null) {
+                PrivateReadGate(
+                    bookUrl = privateGateKey,
+                    onExit = exitVideoRoute,
+                    onOpenLocalPasswordSettings = {
+                        onNavigateToRoute(MainRouteSettingsPrivate)
+                    },
+                ) {
+                    playerContent()
+                }
+            } else {
+                playerContent()
             }
         }
     }
@@ -1530,6 +1543,17 @@ fun MainActivity.mainEntryProvider(
             // 私密内容需要本地密码：直接把人送到私密设置页，而不是只弹一句提示
             onOpenSettings = {
                 onNavigateToRoute(MainRouteSettingsPrivate)
+            },
+            onOpenMagnetPlayer = { url, title, coverPath, author, intro ->
+                onNavigateToRoute(
+                    MainRouteVideoPlay(
+                        magnetUrl = url,
+                        magnetTitle = title,
+                        magnetAuthor = author,
+                        magnetIntro = intro,
+                        coverPath = coverPath,
+                    )
+                )
             },
             onOpenReader = { bookUrl, inBookshelf, chapterChanged ->
                 onNavigateToRoute(

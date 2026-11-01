@@ -173,3 +173,20 @@ sealed interface VideoPlayerEffect {
         val chapter: BookChapter?,
     ) : VideoPlayerEffect
 }
+
+/** 磁力播放：文件条显示在播放画面与标题之间。 */
+@Stable
+data class MagnetPanelState(
+    val loading: Boolean = true,
+    val files: ImmutableList<MagnetFileChip> = persistentListOf(),
+    val preparingIndex: Int? = null,
+    val playingIndex: Int? = null,
+    val error: String? = null,
+)
+
+@Stable
+data class MagnetFileChip(
+    val index: Int,
+    val name: String,
+    val size: String,
+)

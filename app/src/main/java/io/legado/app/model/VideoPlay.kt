@@ -42,6 +42,10 @@ import java.util.concurrent.ConcurrentHashMap
 data class VideoPlayState(
     val bookName: String = "",
     val chapterTitle: String = "",
+    /** 无书籍上下文的直链（磁力）用；书籍播放时以 book.author 为准。 */
+    val author: String = "",
+    /** 无书籍上下文的直链（磁力）用；书籍播放时以 book.listIntro 为准。 */
+    val intro: String = "",
     /** 卷名列表；为空表示该书不分卷。 */
     val volumes: List<String> = emptyList(),
     val volumeIndex: Int = 0,
@@ -314,7 +318,12 @@ object VideoPlay : CoroutineScope by MainScope() {
     }
 
     /** 播放一条没有书籍上下文的直链（外部/调试入口），进度按地址记在缓存里。 */
-    suspend fun openUrl(url: String, title: String?) {
+    suspend fun openUrl(
+        url: String,
+        title: String?,
+        author: String? = null,
+        intro: String? = null,
+    ) {
         singleUrl = true
         book = null
         bookSource = null
@@ -331,6 +340,8 @@ object VideoPlay : CoroutineScope by MainScope() {
         _state.update {
             it.copy(
                 bookName = title.orEmpty(),
+                author = author.orEmpty(),
+                intro = intro.orEmpty(),
                 chapterTitle = "",
                 volumes = emptyList(),
                 episodes = emptyList(),

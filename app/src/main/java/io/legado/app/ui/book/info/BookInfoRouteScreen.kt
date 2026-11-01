@@ -81,6 +81,13 @@ fun BookInfoRouteScreen(
     onOpenEventList: (bookUrl: String) -> Unit = {},
     /** 私密功能需要本地密码，未设置时引导去设置页（与书架同一条路径） */
     onOpenSettings: () -> Unit = {},
+    onOpenMagnetPlayer: (
+        url: String,
+        title: String?,
+        coverPath: String?,
+        author: String?,
+        intro: String?,
+    ) -> Unit = { _, _, _, _, _ -> },
     sharedTransitionScope: SharedTransitionScope? = null,
     animatedVisibilityScope: AnimatedVisibilityScope? = null,
     sharedCoverKey: String? = null,
@@ -280,6 +287,7 @@ fun BookInfoRouteScreen(
         sharedTransitionScope = sharedTransitionScope,
         animatedVisibilityScope = animatedVisibilityScope,
         sharedCoverKey = sharedCoverKey,
+        onOpenMagnetPlayer = onOpenMagnetPlayer,
     )
 }
 

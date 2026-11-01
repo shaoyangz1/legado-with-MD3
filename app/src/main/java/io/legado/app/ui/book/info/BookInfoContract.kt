@@ -102,6 +102,8 @@ data class BookInfoBookUi(
     val durChapterPos: Int,
     val remark: String?,
     val intro: String?,
+    /** 列表/发现规则拿到的简介，播放页优先展示这一份。 */
+    val listIntro: String? = null,
 ) {
     fun toConflictSummary(): ConflictBookSummary = ConflictBookSummary(
         bookUrl = bookUrl,

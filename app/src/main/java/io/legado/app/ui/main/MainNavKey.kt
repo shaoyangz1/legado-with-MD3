@@ -198,6 +198,11 @@ data class MainRouteVideoPlay(
     val coverPath: String? = null,
     /** 与详情页共用的封面共享元素 key，让封面从详情页平滑飞进播放页。 */
     val sharedCoverKey: String? = null,
+    /** 磁力播放：没有书籍上下文，在播放页内解析文件并默认播最大文件。 */
+    val magnetUrl: String? = null,
+    val magnetTitle: String? = null,
+    val magnetAuthor: String? = null,
+    val magnetIntro: String? = null,
 ) : MainRoute
 
 @Serializable

@@ -3090,4 +3090,7 @@
     <string name="page_anim_ios_curl">iOS仿真</string>
     <string name="page_anim_google_curl">Google仿真</string>
     <string name="page_anim_parallax">視差</string>
+    <string name="magnet_player_resolving">正在解析磁力…</string>
+    <string name="magnet_player_preparing">正在連接節點…</string>
+    <string name="magnet_player_retry">重試</string>
 </resources>

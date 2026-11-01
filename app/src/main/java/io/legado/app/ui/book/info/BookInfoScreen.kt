@@ -195,6 +195,13 @@ fun BookInfoScreen(
     onIntent: (BookInfoIntent) -> Unit,
     onBack: () -> Unit,
     onOpenExplore: (title: String, url: String) -> Unit = { _, _ -> },
+    onOpenMagnetPlayer: (
+        url: String,
+        title: String?,
+        coverPath: String?,
+        author: String?,
+        intro: String?,
+    ) -> Unit = { _, _, _, _, _ -> },
     sharedTransitionScope: SharedTransitionScope? = null,
     animatedVisibilityScope: AnimatedVisibilityScope? = null,
     sharedCoverKey: String? = null,
@@ -261,6 +268,7 @@ fun BookInfoScreen(
             backdropStyle = backdropStyle,
             usesDefaultCover = usesDefaultCover,
             onOpenExplore = onOpenExplore,
+            onOpenMagnetPlayer = onOpenMagnetPlayer,
             onNetworkCoverLoadError = { failedCoverPath ->
                 if (failedCoverPath == state.book?.coverPath) {
                     usesDefaultCover = true
@@ -308,6 +316,13 @@ private fun BookInfoScreenContent(
     usesDefaultCover: Boolean,
     onNetworkCoverLoadError: (String?) -> Unit,
     onOpenExplore: (title: String, url: String) -> Unit,
+    onOpenMagnetPlayer: (
+        url: String,
+        title: String?,
+        coverPath: String?,
+        author: String?,
+        intro: String?,
+    ) -> Unit,
 ) {
     val isMiuix = ThemeResolver.isMiuixEngine(LegadoTheme.composeEngine)
     val scrollBehavior = if (isMiuix) {
@@ -324,13 +339,24 @@ private fun BookInfoScreenContent(
     val jumpToAnotherAppMessage = stringResource(R.string.jump_to_another_app)
     val confirmLabel = stringResource(R.string.confirm)
     val jumpToAnotherApp: (Uri) -> Unit = { uri ->
-        scope.launch {
-            val result = snackbarHostState.showSnackbar(
-                message = jumpToAnotherAppMessage,
-                actionLabel = confirmLabel,
+        // 磁力链接留在应用内播放，其余仍交给外部应用
+        if (uri.scheme.equals("magnet", ignoreCase = true)) {
+            onOpenMagnetPlayer(
+                uri.toString(),
+                state.book?.name,
+                state.book?.coverPath,
+                state.book?.author,
+                state.book?.listIntro,
             )
-            if (result == SnackbarResult.ActionPerformed) {
-                context.openUrl(uri)
+        } else {
+            scope.launch {
+                val result = snackbarHostState.showSnackbar(
+                    message = jumpToAnotherAppMessage,
+                    actionLabel = confirmLabel,
+                )
+                if (result == SnackbarResult.ActionPerformed) {
+                    context.openUrl(uri)
+                }
             }
         }
     }
@@ -496,6 +522,15 @@ private fun BookInfoScreenContent(
                                             onRemarkClick = { onIntent(BookInfoIntent.RemarkClick) },
                                             bookSource = state.bookSource,
                                             onJumpToAnotherApp = jumpToAnotherApp,
+                                            onOpenMagnetPlayer = { url ->
+                                                onOpenMagnetPlayer(
+                                                    url,
+                                                    book.name,
+                                                    book.coverPath,
+                                                    book.author,
+                                                    book.listIntro,
+                                                )
+                                            },
                                             onIntroButtonClick = { name, click ->
                                                 onIntent(
                                                     BookInfoIntent.IntroButtonClick(
@@ -1614,6 +1649,7 @@ private fun BookInfoSummary(
     onRemarkClick: () -> Unit,
     bookSource: BookSource?,
     onJumpToAnotherApp: (Uri) -> Unit,
+    onOpenMagnetPlayer: (url: String) -> Unit,
     onIntroButtonClick: (name: String, click: String) -> Unit,
     onIntroImageClick: (click: String) -> Unit,
     onIntroImageLongClick: (source: String) -> Unit,
@@ -1694,6 +1730,7 @@ private fun BookInfoSummary(
                 ?.substringBefore(","),
             bookSource = bookSource,
             onJumpToAnotherApp = onJumpToAnotherApp,
+            onOpenMagnetPlayer = onOpenMagnetPlayer,
             onButtonClick = onIntroButtonClick,
             onImageClick = onIntroImageClick,
             onImageLongClick = onIntroImageLongClick,
@@ -1714,17 +1751,22 @@ private fun BookInfoIntro(
     baseUrl: String?,
     bookSource: BookSource?,
     onJumpToAnotherApp: (Uri) -> Unit,
+    onOpenMagnetPlayer: (url: String) -> Unit,
     onButtonClick: (name: String, click: String) -> Unit,
     onImageClick: (click: String) -> Unit,
     onImageLongClick: (source: String) -> Unit,
 ) {
     val context = LocalContext.current
     val content = remember(intro) { parseBookInfoIntro(intro) }
-    // 简介里的链接（含 magnet:）交给系统分发；没有可处理的应用时只提示，不崩溃
-    val uriHandler = remember(context) {
+    // 磁力链接留在应用内播放；其余链接交给系统分发，没有可处理的应用时只提示，不崩溃
+    val uriHandler = remember(context, onOpenMagnetPlayer) {
         object : UriHandler {
             override fun openUri(uri: String) {
-                context.openUrl(uri)
+                if (uri.startsWith("magnet:", ignoreCase = true)) {
+                    onOpenMagnetPlayer(uri)
+                } else {
+                    context.openUrl(uri)
+                }
             }
         }
     }
@@ -1789,7 +1831,13 @@ private fun BookInfoIntro(
         is BookInfoIntroContent.Table -> BookInfoTable(
             header = c.header,
             rows = c.rows,
-            onOpen = { context.openUrl(it) },
+            onOpen = { url ->
+                if (url.startsWith("magnet:", ignoreCase = true)) {
+                    onOpenMagnetPlayer(url)
+                } else {
+                    context.openUrl(url)
+                }
+            },
         )
     }
 }

@@ -2125,6 +2125,7 @@ class BookInfoViewModel(
             durChapterPos = durChapterPos,
             remark = remark,
             intro = getDisplayIntro(),
+            listIntro = listIntro,
         )
     }
 

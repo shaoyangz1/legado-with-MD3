@@ -6,11 +6,15 @@ import io.legado.app.R
 import io.legado.app.constant.BookType
 import io.legado.app.constant.IntentAction
 import io.legado.app.data.entities.RssArticle
+import io.legado.app.help.thunder.ThunderEngine
 import io.legado.app.model.SourceCallBack
 import io.legado.app.model.VideoPlay
 import io.legado.app.service.VideoPlayService
 import io.legado.app.utils.startService
+import kotlinx.collections.immutable.toImmutableList
 import kotlinx.collections.immutable.toPersistentList
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -39,6 +43,16 @@ class VideoPlayerViewModel : ViewModel() {
     val effects = _effects.asSharedFlow()
 
     private var initializedBookUrl: String? = null
+
+    private val _magnetState = MutableStateFlow<MagnetPanelState?>(null)
+    val magnetState = _magnetState.asStateFlow()
+    private var magnetUrl: String? = null
+    private var magnetTitle: String? = null
+    private var magnetAuthor: String? = null
+    private var magnetIntro: String? = null
+    private var magnetFiles: List<ThunderEngine.MagnetFile> = emptyList()
+    private var lastMagnetPlayUrl: String? = null
+    private var magnetJob: Job? = null
 
     /**
      * 播放进度：冷流，只有播放页在收集时才跑，离开页面自动停。
@@ -83,8 +97,13 @@ class VideoPlayerViewModel : ViewModel() {
                         bookSourceName = source?.bookSourceName.orEmpty(),
                         hasSourceLogin = !source?.loginUrl.isNullOrBlank(),
                         hasCustomButton = source?.customButton == true,
-                        author = book?.author.orEmpty(),
-                        intro = book?.intro.orEmpty(),
+                        author = book?.author ?: state.author,
+                        intro = if (book != null) {
+                            // 列表/发现规则给的简介更适合播放页；没有时退回详情简介
+                            book.listIntro?.takeIf { it.isNotBlank() } ?: book.intro.orEmpty()
+                        } else {
+                            state.intro
+                        },
                         coverUrl = book?.coverUrl.orEmpty(),
                         bookUrl = book?.bookUrl.orEmpty(),
                     )
@@ -123,6 +142,67 @@ class VideoPlayerViewModel : ViewModel() {
         appCtx.startService<VideoPlayService> { action = IntentAction.play }
         viewModelScope.launch {
             VideoPlay.openRssArticle(article)
+        }
+    }
+
+    /** 直链播放（磁力文件等）：没有书籍/章节上下文，界面其余部分与书籍播放一致。 */
+    fun initMagnet(url: String, title: String?, author: String?, intro: String?) {
+        if (magnetUrl == url && _magnetState.value != null) return
+        magnetUrl = url
+        magnetTitle = title
+        magnetAuthor = author
+        magnetIntro = intro
+        resolveMagnet()
+    }
+
+    fun retryMagnet() = resolveMagnet()
+
+    private fun resolveMagnet() {
+        val url = magnetUrl ?: return
+        magnetJob?.cancel()
+        magnetFiles = emptyList()
+        _magnetState.value = MagnetPanelState(loading = true)
+        magnetJob = viewModelScope.launch {
+            try {
+                val content = ThunderEngine.resolve(url)
+                magnetFiles = content.files
+                _magnetState.update {
+                    it?.copy(
+                        loading = false,
+                        files = content.files.map { file ->
+                            MagnetFileChip(file.index, file.name, file.size)
+                        }.toImmutableList(),
+                        error = null,
+                    )
+                }
+                // 默认直接播体积最大的文件
+                content.files.firstOrNull()?.let { playMagnet(it.index) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (t: Throwable) {
+                _magnetState.update { it?.copy(loading = false, error = t.message) }
+                _effects.tryEmit(VideoPlayerEffect.ShowToast(t.message.orEmpty()))
+            }
+        }
+    }
+
+    fun playMagnet(index: Int) {
+        val file = magnetFiles.firstOrNull { it.index == index } ?: return
+        if (_magnetState.value?.preparingIndex != null) return
+        _magnetState.update { it?.copy(preparingIndex = index, error = null) }
+        viewModelScope.launch {
+            try {
+                val localUrl = ThunderEngine.play(file)
+                lastMagnetPlayUrl = localUrl
+                appCtx.startService<VideoPlayService> { action = IntentAction.play }
+                VideoPlay.openUrl(localUrl, magnetTitle, magnetAuthor, magnetIntro)
+                _magnetState.update { it?.copy(preparingIndex = null, playingIndex = index) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (t: Throwable) {
+                _magnetState.update { it?.copy(preparingIndex = null, error = t.message) }
+                _effects.tryEmit(VideoPlayerEffect.ShowToast(t.message.orEmpty()))
+            }
         }
     }
 
@@ -290,6 +370,12 @@ class VideoPlayerViewModel : ViewModel() {
     override fun onCleared() {
         // 离开播放页不等于停止播放：只把进度落库，播放交给服务继续
         VideoPlay.saveRead()
+        // 磁力流可能还在悬浮窗/后台播放，此时清理会让画面断流；
+        // 留着任务，等下次解析或进程退出时收尾。
+        val url = lastMagnetPlayUrl
+        if (url == null || VideoPlay.playUrl != url || !VideoPlay.state.value.isPlaying) {
+            ThunderEngine.stop()
+        }
         super.onCleared()
     }
 

@@ -3968,4 +3968,7 @@
     <string name="page_anim_ios_curl">iOS Curl</string>
     <string name="page_anim_google_curl">Google Curl</string>
     <string name="page_anim_parallax">Parallax</string>
+    <string name="magnet_player_resolving">Resolving magnet…</string>
+    <string name="magnet_player_preparing">Connecting peers…</string>
+    <string name="magnet_player_retry">Retry</string>
 </resources>
