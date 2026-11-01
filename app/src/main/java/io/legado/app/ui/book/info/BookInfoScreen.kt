@@ -63,6 +63,7 @@ import androidx.compose.material.icons.outlined.Book
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.ExtendedFloatingActionButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MediumFlexibleTopAppBar
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -75,6 +76,7 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
@@ -93,6 +95,8 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.platform.UriHandler
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -100,6 +104,8 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import coil3.ImageLoader
@@ -1714,6 +1720,14 @@ private fun BookInfoIntro(
 ) {
     val context = LocalContext.current
     val content = remember(intro) { parseBookInfoIntro(intro) }
+    // 简介里的链接（含 magnet:）交给系统分发；没有可处理的应用时只提示，不崩溃
+    val uriHandler = remember(context) {
+        object : UriHandler {
+            override fun openUri(uri: String) {
+                context.openUrl(uri)
+            }
+        }
+    }
     if (content == null) {
         AnimatedTextLine(
             text = stringResource(R.string.intro_show_null),
@@ -1729,49 +1743,158 @@ private fun BookInfoIntro(
             onJumpToAnotherApp = onJumpToAnotherApp,
         )
 
-        is BookInfoIntroContent.Html -> HtmlContent(
-            html = c.html,
-            interactive = true,
-            onButtonClick = onButtonClick,
-            onImageClick = onImageClick,
-            onImageLongClick = onImageLongClick,
-            imageModel = { imageUrl ->
-                buildCoverImageRequest(
-                    context = context,
-                    data = imageUrl,
-                    sourceOrigin = bookSource?.bookSourceUrl,
-                    loadOnlyWifi = false,
+        is BookInfoIntroContent.Html -> {
+            CompositionLocalProvider(LocalUriHandler provides uriHandler) {
+                HtmlContent(
+                    html = c.html,
+                    interactive = true,
+                    onButtonClick = onButtonClick,
+                    onImageClick = onImageClick,
+                    onImageLongClick = onImageLongClick,
+                    imageModel = { imageUrl ->
+                        buildCoverImageRequest(
+                            context = context,
+                            data = imageUrl,
+                            sourceOrigin = bookSource?.bookSourceUrl,
+                            loadOnlyWifi = false,
+                        )
+                    },
                 )
-            },
-        )
+            }
+        }
 
-        is BookInfoIntroContent.Markdown -> MarkdownBlock(
-            content = c.markdown,
-            imageModel = { imageUrl ->
-                buildCoverImageRequest(
-                    context = context,
-                    data = imageUrl,
-                    sourceOrigin = bookSource?.bookSourceUrl,
-                    loadOnlyWifi = false,
-                )
-            },
-            onImageClick = onImageClick,
-            onImageLongClick = onImageLongClick,
-        )
+        is BookInfoIntroContent.Markdown -> CompositionLocalProvider(
+            LocalUriHandler provides uriHandler,
+        ) {
+            MarkdownBlock(
+                content = c.markdown,
+                imageModel = { imageUrl ->
+                    buildCoverImageRequest(
+                        context = context,
+                        data = imageUrl,
+                        sourceOrigin = bookSource?.bookSourceUrl,
+                        loadOnlyWifi = false,
+                    )
+                },
+                onImageClick = onImageClick,
+                onImageLongClick = onImageLongClick,
+            )
+        }
 
         is BookInfoIntroContent.Plain -> AnimatedTextLine(
             text = c.text,
             style = LegadoTheme.typography.bodyMedium,
         )
+
+        is BookInfoIntroContent.Magnet -> MagnetTable(
+            entries = c.entries,
+            onOpen = { context.openUrl(it) },
+        )
     }
 }
+
+/** 简介里的磁力列表；名称单行省略，整行点击交给系统磁力播放器。 */
+@Composable
+private fun MagnetTable(entries: List<MagnetEntry>, onOpen: (String) -> Unit) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            AppText(
+                text = stringResource(R.string.magnet_name),
+                modifier = Modifier.weight(1f),
+                style = LegadoTheme.typography.labelMedium,
+                color = LegadoTheme.colorScheme.onSurfaceVariant,
+            )
+            AppText(
+                text = stringResource(R.string.magnet_size),
+                modifier = Modifier.width(MAGNET_SIZE_COLUMN_WIDTH),
+                style = LegadoTheme.typography.labelMedium,
+                color = LegadoTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.End,
+            )
+            AppText(
+                text = stringResource(R.string.magnet_date),
+                modifier = Modifier.width(MAGNET_DATE_COLUMN_WIDTH),
+                style = LegadoTheme.typography.labelMedium,
+                color = LegadoTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.End,
+            )
+        }
+        HorizontalDivider(color = LegadoTheme.colorScheme.outlineVariant)
+        entries.forEach { entry ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onOpen(entry.link) }
+                    .padding(vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                AppText(
+                    text = entry.name,
+                    modifier = Modifier.weight(1f),
+                    style = LegadoTheme.typography.bodyMedium,
+                    color = LegadoTheme.colorScheme.primary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                AppText(
+                    text = entry.size,
+                    modifier = Modifier.width(MAGNET_SIZE_COLUMN_WIDTH),
+                    style = LegadoTheme.typography.bodySmall,
+                    color = LegadoTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.End,
+                )
+                AppText(
+                    text = entry.date,
+                    modifier = Modifier.width(MAGNET_DATE_COLUMN_WIDTH),
+                    style = LegadoTheme.typography.bodySmall,
+                    color = LegadoTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.End,
+                )
+            }
+            HorizontalDivider(color = LegadoTheme.colorScheme.outlineVariant)
+        }
+    }
+}
+
+private val MAGNET_SIZE_COLUMN_WIDTH = 76.dp
+private val MAGNET_DATE_COLUMN_WIDTH = 96.dp
 
 private sealed interface BookInfoIntroContent {
     data class Web(val html: String) : BookInfoIntroContent
     data class Html(val html: String) : BookInfoIntroContent
     data class Markdown(val markdown: String) : BookInfoIntroContent
     data class Plain(val text: String) : BookInfoIntroContent
+    data class Magnet(val entries: List<MagnetEntry>) : BookInfoIntroContent
 }
+
+private data class MagnetEntry(
+    val name: String,
+    val size: String,
+    val date: String,
+    val link: String,
+)
+
+/** 每行：名称 \t 大小 \t 日期 \t magnet 链接。 */
+private fun parseMagnetEntries(raw: String): List<MagnetEntry> =
+    raw.lineSequence().mapNotNull { line ->
+        val parts = line.split('\t')
+        if (parts.size < 4) return@mapNotNull null
+        val link = parts[3].trim()
+        if (link.isEmpty()) {
+            null
+        } else {
+            MagnetEntry(parts[0].trim(), parts[1].trim(), parts[2].trim(), link)
+        }
+    }.toList()
 
 /**
  * 解析简介前缀，与上游 showBookIntro 一致：
@@ -1796,6 +1919,15 @@ private fun parseBookInfoIntro(intro: String?): BookInfoIntroContent? {
                 BookInfoIntroContent.Plain(HtmlFormatter.formatDisplayText(intro))
             } else {
                 BookInfoIntroContent.Html(intro.substring(9, lastIndex))
+            }
+        }
+
+        intro.startsWith("<magnet>", ignoreCase = true) -> {
+            val lastIndex = intro.lastIndexOf("<")
+            if (lastIndex < 8) {
+                BookInfoIntroContent.Plain(HtmlFormatter.formatDisplayText(intro))
+            } else {
+                BookInfoIntroContent.Magnet(parseMagnetEntries(intro.substring(8, lastIndex)))
             }
         }
 

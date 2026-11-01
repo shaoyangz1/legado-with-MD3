@@ -3965,4 +3965,7 @@
     <string name="page_anim_ios_curl">iOS仿真</string>
     <string name="page_anim_google_curl">Google仿真</string>
     <string name="page_anim_parallax">视差</string>
+    <string name="magnet_name">磁力名称</string>
+    <string name="magnet_size">档案大小</string>
+    <string name="magnet_date">分享日期</string>
 </resources>
