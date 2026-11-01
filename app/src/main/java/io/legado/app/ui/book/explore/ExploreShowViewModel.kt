@@ -129,7 +129,7 @@ class ExploreShowViewModel(
             )
             ExploreShowIntent.LoadMore -> loadMore()
             is ExploreShowIntent.JumpToPage -> jumpToPage(intent.page)
-            ExploreShowIntent.ForceLoadNext -> loadMore(forceLoad = true)
+            ExploreShowIntent.ForceLoadNext -> loadMore()
             ExploreShowIntent.Refresh -> loadMore(isRefresh = true)
             is ExploreShowIntent.SwitchKind -> switchKind(intent.kind)
             ExploreShowIntent.ToggleLayout -> toggleLayout()
@@ -401,18 +401,20 @@ class ExploreShowViewModel(
         loadJob = viewModelScope.launch { fetchPage(source, url, generation) }
     }
 
-    private fun loadMore(isRefresh: Boolean = false, forceLoad: Boolean = false) {
+    private fun loadMore(isRefresh: Boolean = false) {
         val source = sourceUrl
         val url = exploreUrl
         val loadState = _loadState.value
-        if (source == null || loadState.isLoading || (loadState.isEnd && !isRefresh && !forceLoad)) return
+        // 过滤后当前页为空时界面会继续请求下一页；这类请求不能突破 isEnd，
+        // 否则空页会反复触发加载、isEnd 又被重置，形成一直翻页的循环。
+        if (source == null || loadState.isLoading || (loadState.isEnd && !isRefresh)) return
         val generation = ++loadGeneration
 
         _loadState.update {
             it.copy(
                 isLoading = true,
                 isRefreshing = isRefresh,
-                isEnd = if (isRefresh || forceLoad) false else it.isEnd,
+                isEnd = if (isRefresh) false else it.isEnd,
                 errorMsg = null,
             )
         }
@@ -422,10 +424,6 @@ class ExploreShowViewModel(
                 page = 1
                 autoPageCount = 0
                 _rawBooks.value = emptyList()
-            }
-
-            if (forceLoad) {
-                autoPageCount = 0
             }
 
             fetchPage(source, url, generation)
@@ -452,10 +450,9 @@ class ExploreShowViewModel(
         }.onSuccess { result ->
             if (generation != loadGeneration) return@onSuccess
             val currentList = _rawBooks.value
-            val existingUrls = currentList.map { it.bookUrl }.toSet()
             val uniqueNewBooks = result.books
-                .filter { it.bookUrl !in existingUrls }
-                .distinctBy { it.bookUrl }
+                .excludingListPage(url)
+                .newBooksNotIn(currentList)
 
             if (result.books.isNotEmpty()) {
                 saveSearchBooksUseCase.save(result.books)
@@ -509,6 +506,31 @@ class ExploreShowViewModel(
 }
 
 /**
+ * 跳过已加载过的书：URL 相同，或书名+作者相同。
+ * 服务端翻页时常换 URL 复用同一批作品，只按 URL 去重会让列表出现重复条目、永远翻不到底。
+ */
+internal fun List<SearchBook>.newBooksNotIn(existing: List<SearchBook>): List<SearchBook> {
+    val existingUrls = existing.mapTo(HashSet()) { it.bookUrl }
+    val existingKeys = existing.mapTo(HashSet()) { it.name to it.author }
+    return filter { it.bookUrl !in existingUrls }
+        .filter { (it.name to it.author) !in existingKeys }
+        .distinctBy { it.bookUrl }
+}
+
+/**
+ * 过滤掉「列表页自身」被当成书的情况：书源里某个条目取不到详情链接时，
+ * legado 会把 bookUrl 回退成 baseUrl（当前列表页地址），翻页后就成了 ?page=N 的假书。
+ */
+internal fun List<SearchBook>.excludingListPage(listUrl: String?): List<SearchBook> {
+    val listPath = listUrl?.substringBefore('?')?.substringBefore('#')?.trimEnd('/')
+    if (listPath.isNullOrBlank()) return this
+    return filter {
+        it.bookUrl.substringBefore('?').substringBefore('#').trimEnd('/') != listPath
+    }
+}
+
+
+/**
  * 运行时地址的参数兜底翻页：替换已有的同名查询参数，否则追加 `param=page`，fragment 保持原位。
  * 只对不带页码规则的运行时地址生效，见 [supportsParamPagination]；第一页按原地址请求，
  * 不改变书源直入时的首次请求。
@@ -534,7 +556,10 @@ internal fun String?.withPageParam(page: Int, param: String): String? {
             val tail = base.substring(existing.range.last + 1)
             return base.substring(0, existing.range.first) + prefix + page + tail + fragment
         }
-        return base.trimEnd('/') + param.replace("{page}", page.toString()) + fragment
+        // 整段 query 模板（如 Jable 的 "?mode=async&...&from={page}"）要保持原地址的尾斜杠，
+        // 去掉后 /categories/xxx?mode= 会变成 /categories/xxx?mode=，服务端拿不到列表。
+        val appendBase = if (param.startsWith("?")) base else base.trimEnd('/')
+        return appendBase + param.replace("{page}", page.toString()) + fragment
     }
     val pattern = Regex("([?&])${Regex.escape(param)}=\\d+")
     val withPage = if (pattern.containsMatchIn(base)) {

@@ -43,6 +43,8 @@ fun PlayerProgressSlider(
     /** 压在深色画面（视频播放器浮层）上时传浅色，默认跟随主题。 */
     activeColor: Color = LegadoTheme.colorScheme.onSurface,
     inactiveColor: Color = LegadoTheme.colorScheme.onSurface.copy(alpha = 0.38f),
+    /** 手势锁定时只读：仍显示进度，但不响应点击/拖动。 */
+    enabled: Boolean = true,
 ) {
     val rangeLength = (valueRange.endInclusive - valueRange.start).coerceAtLeast(1f)
     var isDragging by remember { mutableStateOf(false) }
@@ -86,7 +88,8 @@ fun PlayerProgressSlider(
             .height(18.dp)
             .graphicsLayer { scaleY = trackScale }
             .onSizeChanged { widthPx = it.width.toFloat().coerceAtLeast(1f) }
-            .pointerInput(valueRange, widthPx) {
+            .pointerInput(valueRange, widthPx, enabled) {
+                if (!enabled) return@pointerInput
                 fun fractionAt(x: Float): Float = (x / widthPx).coerceIn(0f, 1f)
                 fun commit(fraction: Float) {
                     previewFraction = fraction

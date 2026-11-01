@@ -89,6 +89,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.role
@@ -151,6 +152,9 @@ private const val VIDEO_CONTROLS_FADE_MILLIS = 180
 
 /** 横向拖动多少屏宽才相当于整段视频时长；值越大，进度变化越迟钝。 */
 private const val DEFAULT_SEEK_SCREENS_PER_DURATION = 6f
+
+/** 锁定只关闭进度手势，亮度/音量不受影响。 */
+internal fun videoProgressSeekingEnabled(gestureLocked: Boolean): Boolean = !gestureLocked
 
 /** 播放页首帧就确定封面布局比例，避免图片加载回调改变高度造成上下留白跳动。 */
 internal fun videoPlayerInitialCoverAspectRatio(cachedRatio: Float?): Float =
@@ -227,6 +231,13 @@ fun VideoPlayerScreen(
     }
     var controlsVisible by remember { mutableStateOf(true) }
     var menuExpanded by remember { mutableStateOf(false) }
+    var progressGestureLocked by remember { mutableStateOf(false) }
+    val progressSeekingEnabled by rememberUpdatedState(
+        videoProgressSeekingEnabled(progressGestureLocked)
+    )
+    LaunchedEffect(state.isFullscreen) {
+        if (!state.isFullscreen) progressGestureLocked = false
+    }
     // 手势在 pointerInput(Unit) 里持有，设置项改了之后也要即时生效
     val seekScreens by rememberUpdatedState(state.seekScreens)
     // 拖动进度条时的中央时间预览，以及纵向调亮度/音量时的中央指示
@@ -293,6 +304,13 @@ fun VideoPlayerScreen(
 
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
         playerViewRef?.player = VideoPlay.player
+        // 从后台回来系统栏会被系统恢复，全屏状态下补藏一次
+        if (state.isFullscreen) {
+            activity?.window?.let { window ->
+                WindowCompat.getInsetsController(window, window.decorView)
+                    .hide(WindowInsetsCompat.Type.systemBars())
+            }
+        }
     }
 
     DisposableEffect(Unit) {
@@ -324,7 +342,17 @@ fun VideoPlayerScreen(
         awaitDispose { player.removeListener(listener) }
     }
 
-    LaunchedEffect(state.isFullscreen, activity, videoSize) {
+    val configuration = LocalConfiguration.current
+    // 旋转 / 分屏后窗口会重建 insets 控制器状态，系统栏可能被重新显示；
+    // 把配置纳入 key，窗口稳定后再藏一次。
+    LaunchedEffect(
+        state.isFullscreen,
+        activity,
+        videoSize,
+        configuration.orientation,
+        configuration.screenWidthDp,
+        configuration.screenHeightDp,
+    ) {
         val window = activity?.window ?: return@LaunchedEffect
         val controller = WindowCompat.getInsetsController(window, window.decorView)
         if (state.isFullscreen) {
@@ -390,7 +418,6 @@ fun VideoPlayerScreen(
     val fullscreen = state.isFullscreen
     // 播放区高度：默认占屏高 40%，拖底部把手可以继续拉高；
     // 上限只受「信息区保底高度」约束，横屏片源也能一路拉到接近满屏。
-    val configuration = LocalConfiguration.current
     val screenHeightDp = configuration.screenHeightDp.toFloat()
     val playerDefaultHeight = screenHeightDp * PLAYER_DEFAULT_HEIGHT_RATIO
     val playerMaxHeight = (screenHeightDp - PLAYER_BOTTOM_RESERVE_DP)
@@ -511,6 +538,15 @@ fun VideoPlayerScreen(
                                             abs(firstMove.position.x - startX) >=
                                                 abs(firstMove.position.y - startY)
                                         if (horizontal) {
+                                            if (!progressSeekingEnabled) {
+                                                var change = firstMove ?: return@awaitEachGesture
+                                                while (change.pressed) {
+                                                    change.consume()
+                                                    change = awaitPointerEvent().changes
+                                                        .firstOrNull { it.id == down.id } ?: break
+                                                }
+                                                return@awaitEachGesture
+                                            }
                                             dragToSeek(
                                                 down = down,
                                                 firstMove = firstMove,
@@ -619,6 +655,11 @@ fun VideoPlayerScreen(
                             canNext = state.episodeIndex < state.episodes.lastIndex ||
                                 state.volumeIndex < state.volumes.lastIndex,
                             seekStep = state.seekStep,
+                            progressSeekingEnabled = progressSeekingEnabled,
+                            progressGestureLocked = progressGestureLocked,
+                            onToggleProgressGestureLock = {
+                                progressGestureLocked = !progressGestureLocked
+                            },
                             onBack = exitPlayer,
                             onTogglePlay = {
                                 viewModel.onIntent(VideoPlayerIntent.TogglePlay)
@@ -802,6 +843,9 @@ private fun openExternalPlayer(
 private fun VideoTopBar(
     /** 全屏时系统栏隐藏，浮层要自己避让状态栏；竖屏下播放器已经让开了。 */
     topInset: Boolean,
+    fullscreen: Boolean,
+    progressGestureLocked: Boolean,
+    onToggleProgressGestureLock: () -> Unit,
     onBack: () -> Unit,
     menuExpanded: Boolean,
     onMenuExpand: () -> Unit,
@@ -812,7 +856,7 @@ private fun VideoTopBar(
     onPip: () -> Unit,
     onIntent: (VideoPlayerIntent) -> Unit,
 ) {
-    Row(
+    Column(
         modifier = Modifier
             .fillMaxWidth()
             // 横屏下挖孔落在左右两侧，返回键与菜单键必须让开，否则会压在挖孔上
@@ -835,10 +879,13 @@ private fun VideoTopBar(
                 }
             )
             .padding(top = 8.dp, start = 8.dp, end = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
     ) {
-        OverlayIconButton(icon = AppIcons.Back, contentDescription = null, onClick = onBack)
-        Spacer(Modifier.weight(1f))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            OverlayIconButton(icon = AppIcons.Back, contentDescription = null, onClick = onBack)
+            Spacer(Modifier.weight(1f))
         Box {
             OverlayIconButton(
                 icon = AppIcons.MoreVert,
@@ -932,6 +979,34 @@ private fun VideoTopBar(
                         },
                     )
                 }
+            }
+        }
+        }
+        // 全屏才需要锁手势：放在返回键下方并留出间距，避免误触
+        if (fullscreen) {
+            Spacer(Modifier.height(12.dp))
+            AppIconButton(
+                onClick = onToggleProgressGestureLock,
+                modifier = Modifier.size(40.dp),
+            ) {
+                AppIcon(
+                    painter = painterResource(
+                        if (progressGestureLocked) {
+                            R.drawable.ic_video_lock
+                        } else {
+                            R.drawable.ic_video_unlock
+                        }
+                    ),
+                    contentDescription = stringResource(
+                        if (progressGestureLocked) {
+                            R.string.video_gesture_unlock
+                        } else {
+                            R.string.video_gesture_lock
+                        }
+                    ),
+                    tint = Color.White,
+                    modifier = Modifier.size(20.dp),
+                )
             }
         }
     }
@@ -1278,6 +1353,9 @@ private fun VideoPlayerOverlay(
     canPrevious: Boolean,
     canNext: Boolean,
     seekStep: Int,
+    progressSeekingEnabled: Boolean,
+    progressGestureLocked: Boolean,
+    onToggleProgressGestureLock: () -> Unit,
     onBack: () -> Unit,
     onTogglePlay: () -> Unit,
     onSeek: (Long) -> Unit,
@@ -1302,6 +1380,9 @@ private fun VideoPlayerOverlay(
             )
             VideoTopBar(
                 topInset = topInset,
+                fullscreen = fullscreen,
+                progressGestureLocked = progressGestureLocked,
+                onToggleProgressGestureLock = onToggleProgressGestureLock,
                 onBack = onBack,
                 menuExpanded = menuExpanded,
                 onMenuExpand = onMenuExpand,
@@ -1343,7 +1424,11 @@ private fun VideoPlayerOverlay(
                 )
                 .padding(horizontal = 12.dp, vertical = 4.dp),
         ) {
-            ProgressBarRow(progress = progress, onSeek = onSeek)
+            ProgressBarRow(
+                progress = progress,
+                onSeek = onSeek,
+                seekingEnabled = progressSeekingEnabled,
+            )
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
@@ -1412,6 +1497,7 @@ private fun VideoPlayerOverlay(
 private fun ProgressBarRow(
     progress: State<VideoPlaybackProgress>,
     onSeek: (Long) -> Unit,
+    seekingEnabled: Boolean = true,
 ) {
     val value = progress.value
     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1430,6 +1516,7 @@ private fun ProgressBarRow(
                 .padding(horizontal = 10.dp),
             activeColor = Color.White,
             inactiveColor = Color.White.copy(alpha = 0.38f),
+            enabled = seekingEnabled,
         )
         AppText(
             text = formatTime(value.durationMs),

@@ -125,6 +125,16 @@ class ExploreShowPageParamTest {
     }
 
     @Test
+    fun appendsQueryTemplateKeepingTrailingSlash() {
+        val param = "?mode=async&function=get_block&block_id=list_videos_common_videos_list" +
+            "&sort_by=post_date&from={page}"
+        assertEquals(
+            "https://example.com/categories/tag/$param".replace("{page}", "2"),
+            "https://example.com/categories/tag/".withPageParam(2, param),
+        )
+    }
+
+    @Test
     fun skipsPageRangeRuleUrl() {
         val url = "https://example.com/list-<1,9,99>.html"
         assertEquals(url, url.withPageParam(2, "page"))
