@@ -112,6 +112,7 @@ import io.legado.app.constant.BookType
 import io.legado.app.data.entities.RssArticle
 import io.legado.app.model.SourceCallBack
 import io.legado.app.model.VideoPlay
+import io.legado.app.service.VideoPlayService
 import io.legado.app.ui.main.MainActivity
 import io.legado.app.ui.theme.LegadoTheme
 import io.legado.app.ui.widget.components.AppSlider
@@ -121,6 +122,7 @@ import io.legado.app.ui.widget.components.button.series.SmallTonalButton
 import io.legado.app.ui.widget.components.card.GlassCard
 import io.legado.app.ui.widget.components.card.NormalCard
 import io.legado.app.ui.widget.components.card.TextCard
+import io.legado.app.ui.widget.components.progressIndicator.AppCircularProgressIndicator
 import io.legado.app.ui.widget.components.icon.AppIcon
 import io.legado.app.ui.widget.components.icon.AppIcons
 import io.legado.app.ui.widget.components.image.cover.CoilBookCover
@@ -274,7 +276,9 @@ fun VideoPlayerScreen(
 
     LaunchedEffect(bookUrl, rssArticle, magnetUrl) {
         when {
-            magnetUrl != null -> viewModel.initMagnet(magnetUrl, magnetTitle, magnetAuthor, magnetIntro)
+            magnetUrl != null -> viewModel.initMagnet(
+                magnetUrl, magnetTitle, magnetAuthor, magnetIntro, initialCoverPath
+            )
             rssArticle != null -> viewModel.initRss(rssArticle)
             bookUrl != null -> viewModel.init(bookUrl)
         }
@@ -285,6 +289,10 @@ fun VideoPlayerScreen(
             when (effect) {
                 is VideoPlayerEffect.ShowToast -> context.toastOnUi(effect.message)
                 is VideoPlayerEffect.CopyPlayUrl -> copyPlayUrl(context, effect.url)
+                is VideoPlayerEffect.CopyMagnetLink -> {
+                    context.sendToClip(effect.url)
+                    openMagnetAppChooser(context, effect.url)
+                }
                 is VideoPlayerEffect.OpenExternalPlayer -> openExternalPlayer(
                     context, effect.url, effect.title
                 )
@@ -312,7 +320,14 @@ fun VideoPlayerScreen(
     }
 
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
-        playerViewRef?.player = VideoPlay.player
+        // 悬浮小窗开着时由小窗渲染，页面不要抢 player
+        if (!VideoPlayService.isFloatingVisible) {
+            playerViewRef?.let { playerView ->
+                // 同一个 player 重复 setPlayer 时 media3 不会重建画面，先摘再挂
+                playerView.player = null
+                playerView.player = VideoPlay.player
+            }
+        }
         // 从后台回来系统栏会被系统恢复，全屏状态下补藏一次
         if (state.isFullscreen) {
             activity?.window?.let { window ->
@@ -320,6 +335,15 @@ fun VideoPlayerScreen(
                     .hide(WindowInsetsCompat.Type.systemBars())
             }
         }
+    }
+
+    // 悬浮小窗显隐时在「页面 PlayerView」和「小窗」之间移交画面，
+    // 两个 PlayerView 同时绑定同一个 ExoPlayer 会让页面画面停在最后一帧。
+    val floatingVisible = VideoPlayService.isFloatingVisible
+    LaunchedEffect(floatingVisible, playerViewRef) {
+        val playerView = playerViewRef ?: return@LaunchedEffect
+        playerView.player = null
+        if (!floatingVisible) playerView.player = VideoPlay.player
     }
 
     DisposableEffect(Unit) {
@@ -660,6 +684,8 @@ fun VideoPlayerScreen(
                             hasSource = state.hasSource,
                             hasSourceLogin = state.hasSourceLogin,
                             hasCustomButton = state.hasCustomButton,
+                            magnetSession = magnetUrl != null,
+                            keepMagnetService = state.keepMagnetService,
                             canPrevious = state.episodeIndex > 0 || state.volumeIndex > 0,
                             canNext = state.episodeIndex < state.episodes.lastIndex ||
                                 state.volumeIndex < state.volumes.lastIndex,
@@ -835,6 +861,20 @@ private fun runSourceCustomButton(
     }
 }
 
+/** 磁力链接交给系统选择器，用户自己挑迅雷/其他磁力客户端。 */
+private fun openMagnetAppChooser(context: android.content.Context, url: String) {
+    runCatching {
+        val intent = Intent(Intent.ACTION_VIEW)
+            .setData(android.net.Uri.parse(url))
+        // NEW_TASK 落在真正 startActivity 的 chooser 上，Application context 调用才不会抛异常
+        val chooser = Intent.createChooser(intent, context.getString(R.string.open_fun))
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        context.startActivity(chooser)
+    }.onFailure {
+        context.toastOnUi(it.localizedMessage ?: context.getString(R.string.load_failed))
+    }
+}
+
 private fun openExternalPlayer(
     context: android.content.Context,
     url: String,
@@ -866,6 +906,8 @@ private fun VideoTopBar(
     hasSource: Boolean,
     hasSourceLogin: Boolean,
     hasCustomButton: Boolean,
+    magnetSession: Boolean,
+    keepMagnetService: Boolean,
     onPip: () -> Unit,
     onIntent: (VideoPlayerIntent) -> Unit,
 ) {
@@ -909,6 +951,15 @@ private fun VideoTopBar(
                 expanded = menuExpanded,
                 onDismissRequest = onMenuDismiss,
             ) { dismiss ->
+                if (magnetSession) {
+                    RoundDropdownMenuItem(
+                        text = stringResource(R.string.video_download),
+                        onClick = {
+                            dismiss()
+                            onIntent(VideoPlayerIntent.DownloadVideo)
+                        },
+                    )
+                }
                 RoundDropdownMenuItem(
                     text = stringResource(R.string.copy_play_url),
                     onClick = {
@@ -951,6 +1002,23 @@ private fun VideoTopBar(
                         )
                     },
                 )
+                if (magnetSession) {
+                    RoundDropdownMenuItem(
+                        text = stringResource(R.string.magnet_player_copy),
+                        onClick = {
+                            dismiss()
+                            onIntent(VideoPlayerIntent.CopyMagnetLink)
+                        },
+                    )
+                    RoundDropdownMenuItem(
+                        text = stringResource(R.string.video_keep_magnet_service),
+                        isSelected = keepMagnetService,
+                        onClick = {
+                            dismiss()
+                            onIntent(VideoPlayerIntent.ToggleKeepMagnetService)
+                        },
+                    )
+                }
                 RoundDropdownMenuItem(
                     text = stringResource(R.string.config_settings),
                     onClick = {
@@ -1179,27 +1247,45 @@ private fun MagnetFileRow(
             items(state.files, key = { it.index }) { file ->
                 val preparing = state.preparingIndex == file.index
                 val playing = state.playingIndex == file.index
-                TextCard(
-                    text = if (preparing) {
-                        "${file.name}  ${file.size}  ${
-                            stringResource(R.string.magnet_player_preparing)
-                        }"
-                    } else {
-                        "${file.name}  ${file.size}"
-                    },
-                    textStyle = LegadoTheme.typography.labelLargeEmphasized,
-                    backgroundColor = if (playing) {
-                        LegadoTheme.colorScheme.primaryContainer
-                    } else {
-                        LegadoTheme.colorScheme.surfaceContainer
-                    },
-                    contentColor = if (playing) {
-                        LegadoTheme.colorScheme.onPrimaryContainer
-                    } else {
-                        LegadoTheme.colorScheme.onSurfaceVariant
-                    },
-                    onClick = { onFileClick(file.index) },
-                )
+                if (preparing) {
+                    NormalCard(
+                        onClick = { onFileClick(file.index) },
+                        cornerRadius = 8.dp,
+                        containerColor = LegadoTheme.colorScheme.surfaceContainer,
+                        contentColor = LegadoTheme.colorScheme.onSurfaceVariant,
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            AppCircularProgressIndicator(
+                                modifier = Modifier.size(14.dp),
+                                strokeWidth = 2.dp,
+                            )
+                            AppText(
+                                text = "${file.name}  ${file.size}",
+                                style = LegadoTheme.typography.labelLargeEmphasized,
+                            )
+                        }
+                    }
+                } else {
+                    TextCard(
+                        text = "${file.name}  ${file.size}",
+                        textStyle = LegadoTheme.typography.labelLargeEmphasized,
+                        backgroundColor = if (playing) {
+                            LegadoTheme.colorScheme.primaryContainer
+                        } else {
+                            LegadoTheme.colorScheme.surfaceContainer
+                        },
+                        contentColor = if (playing) {
+                            LegadoTheme.colorScheme.onPrimaryContainer
+                        } else {
+                            LegadoTheme.colorScheme.onSurfaceVariant
+                        },
+                        onClick = { onFileClick(file.index) },
+                    )
+                }
             }
         }
     }
@@ -1441,6 +1527,8 @@ private fun VideoPlayerOverlay(
     hasSource: Boolean,
     hasSourceLogin: Boolean,
     hasCustomButton: Boolean,
+    magnetSession: Boolean,
+    keepMagnetService: Boolean,
     canPrevious: Boolean,
     canNext: Boolean,
     seekStep: Int,
@@ -1481,6 +1569,8 @@ private fun VideoPlayerOverlay(
                 hasSource = hasSource,
                 hasSourceLogin = hasSourceLogin,
                 hasCustomButton = hasCustomButton,
+                magnetSession = magnetSession,
+                keepMagnetService = keepMagnetService,
                 onPip = onPip,
                 onIntent = onIntent,
             )

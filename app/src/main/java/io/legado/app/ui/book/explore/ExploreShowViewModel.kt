@@ -545,13 +545,18 @@ internal fun String?.withPageParam(page: Int, param: String): String? {
     if (tokenIndex > 0) {
         val prefix = param.substring(0, tokenIndex)
         val suffix = param.substring(tokenIndex + "{page}".length)
-        // 标签地址本身就带页码（如 /t/87/page/2/、/t/87-2/、/type/xx/1/）：替换已有页码，不能追加
-        val existing = Regex(Regex.escape(prefix) + "\\d+")
-            .findAll(base)
-            .lastOrNull { match ->
-                val tail = base.substring(match.range.last + 1)
-                suffix.isEmpty() || tail.startsWith(suffix)
-            }
+        // 标签地址本身就带页码（如 /t/87/page/2/、/t/87-2/、/type/xx/1/）：替换已有页码，不能追加。
+        // 裸 "/{page}" 无前后缀可分，末尾数字实际可能是 ID（JavBus 的 /star/155t、/studio/1），一律追加。
+        val existing = if (prefix == "/" && suffix.isEmpty()) {
+            null
+        } else {
+            Regex(Regex.escape(prefix) + "\\d+")
+                .findAll(base)
+                .lastOrNull { match ->
+                    val tail = base.substring(match.range.last + 1)
+                    suffix.isEmpty() || tail.startsWith(suffix)
+                }
+        }
         if (existing != null) {
             val tail = base.substring(existing.range.last + 1)
             return base.substring(0, existing.range.first) + prefix + page + tail + fragment

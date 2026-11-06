@@ -1087,6 +1087,10 @@ fun BookshelfScreen(
                                 onGlobalSearch = { onNavigateToSearch(uiState.searchKey.trim()) },
                                 onBookClick = openBook,
                                 onBookLongClick = onBookLongClick,
+                                onBookSelectionModeRequest = { item ->
+                                    onIntent(BookshelfIntent.ToggleEditMode)
+                                    toggleBookSelection(item.book.bookUrl)
+                                },
                                 onLockedBookClick = requestBookUnlock,
                                 isCurrentPage = true,
                                 sharedCoverGroupId = currentGroupId,
@@ -1173,6 +1177,10 @@ fun BookshelfScreen(
                                             onGlobalSearch = { onNavigateToSearch(uiState.searchKey.trim()) },
                                             onBookClick = openBook,
                                             onBookLongClick = onBookLongClick,
+                                            onBookSelectionModeRequest = { item ->
+                                                onIntent(BookshelfIntent.ToggleEditMode)
+                                                toggleBookSelection(item.book.bookUrl)
+                                            },
                                             onLockedBookClick = requestBookUnlock,
                                             isCurrentPage = isSelectedGroup,
                                             sharedCoverGroupId = group.groupId,
@@ -1483,6 +1491,7 @@ private fun BookshelfOverlays(
     SourceInputDialog(
         show = activeOverlay == BookshelfOverlay.AddUrlDialog,
         title = stringResource(R.string.add_book_url),
+        hint = stringResource(R.string.add_book_url_hint),
         onDismissRequest = { onIntent(BookshelfIntent.DismissOverlay) },
         onConfirm = { url ->
             onIntent(BookshelfIntent.AddBookByUrl(url))
@@ -1660,6 +1669,8 @@ fun BookshelfPage(
     onGlobalSearch: () -> Unit,
     onBookClick: (BookShelfItem, String?) -> Unit,
     onBookLongClick: (BookShelfItem, String?) -> Unit,
+    /** 磁力记录没有详情页：长按直接进入选择模式，方便删除/分组。 */
+    onBookSelectionModeRequest: (BookUiItem) -> Unit = {},
     /** 点击处于脱敏状态的私密书籍：请求验证，验证通过后自动打开阅读 */
     onLockedBookClick: (String) -> Unit = {},
     isCurrentPage: Boolean = true,
@@ -1857,6 +1868,10 @@ fun BookshelfPage(
                             {
                                 if (uiState.isEditMode) {
                                     onToggleBookSelection(bookUi)
+                                } else if (
+                                    bookUi.book.bookUrl.startsWith("magnet:", ignoreCase = true)
+                                ) {
+                                    onBookSelectionModeRequest(bookUi)
                                 } else {
                                     // 长按一律进详情页：脱敏渲染在详情页内完成，
                                     // 不给"长按只弹验证、进不去详情"的分叉

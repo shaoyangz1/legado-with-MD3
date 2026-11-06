@@ -113,6 +113,9 @@ object VideoPlay : CoroutineScope by MainScope() {
         private set
     var videoTitle: String? = null
         private set
+    /** 直链/磁力会话的封面（来自详情页）；通知栏/悬浮窗恢复播放页时带回去。 */
+    var sessionCoverUrl: String? = null
+        private set
     var playUrl: String? = null
         private set
     var danmaku: String? = null
@@ -155,6 +158,8 @@ object VideoPlay : CoroutineScope by MainScope() {
                 it.copy(
                     isLoading = playbackState == Player.STATE_BUFFERING,
                     isPlaying = it.isPlaying && playbackState != Player.STATE_ENDED,
+                    // 重试/重新 seek 成功后播放器会回到 READY，错误提示要跟着消失
+                    error = if (playbackState == Player.STATE_READY) null else it.error,
                 )
             }
             // 自动连播：一集播完直接进入下一集，与上游一致
@@ -229,6 +234,11 @@ object VideoPlay : CoroutineScope by MainScope() {
         get() = AppConfigStore.getInt(PreferKey.videoFloatingEnabled) != 0
         set(value) = AppConfigStore.putInt(PreferKey.videoFloatingEnabled, if (value) 1 else 0)
 
+    /** 磁力播放：离开播放页后仍保留 BT 任务与本地流，方便局域网设备继续拉流。 */
+    var keepMagnetService: Boolean
+        get() = AppConfigStore.getInt(PreferKey.videoKeepMagnetService) != 0
+        set(value) = AppConfigStore.putInt(PreferKey.videoKeepMagnetService, if (value) 1 else 0)
+
     // ——————————————————————————— 会话入口 ———————————————————————————
 
     /**
@@ -269,6 +279,7 @@ object VideoPlay : CoroutineScope by MainScope() {
         durChapterPos = 0
         inBookshelf = true
         videoTitle = null
+        sessionCoverUrl = null
         playUrl = null
         danmaku = null
         singleUrl = false
@@ -281,6 +292,7 @@ object VideoPlay : CoroutineScope by MainScope() {
     suspend fun openBook(bookUrl: String, autoPlay: Boolean = this.autoPlay) {
         beginSession("book:$bookUrl")
         singleUrl = false
+        sessionCoverUrl = null
         _state.update { it.copy(isLoading = true, error = null) }
         val prepared = withContext(Dispatchers.IO) {
             runCatching {
@@ -323,6 +335,7 @@ object VideoPlay : CoroutineScope by MainScope() {
         title: String?,
         author: String? = null,
         intro: String? = null,
+        coverUrl: String? = null,
     ) {
         singleUrl = true
         book = null
@@ -332,6 +345,7 @@ object VideoPlay : CoroutineScope by MainScope() {
         episodes = emptyList()
         chapter = null
         videoTitle = title
+        sessionCoverUrl = coverUrl
         playUrl = url
         danmaku = null
         durChapterPos = withContext(Dispatchers.IO) {
@@ -375,6 +389,7 @@ object VideoPlay : CoroutineScope by MainScope() {
         episodes = emptyList()
         chapter = null
         danmaku = null
+        sessionCoverUrl = null
         val starred = withContext(Dispatchers.IO) {
             appDb.rssStarDao.get(target.origin, target.link)
         }
@@ -671,6 +686,7 @@ object VideoPlay : CoroutineScope by MainScope() {
         preloadingKeys.clear()
         rssStar = null
         sessionKey = null
+        sessionCoverUrl = null
         launch(Dispatchers.IO) { contentRepository.clearTempFiles() }
         _state.update { VideoPlayState() }
         isReleasing = false

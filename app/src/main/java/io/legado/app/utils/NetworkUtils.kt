@@ -7,11 +7,13 @@ import android.os.Build
 import io.legado.app.constant.AppLog
 import okhttp3.internal.publicsuffix.PublicSuffixDatabase
 import splitties.systemservices.connectivityManager
+import java.net.Inet4Address
 import java.net.InetAddress
 import java.net.NetworkInterface
 import java.net.SocketException
 import java.net.URL
 import java.util.BitSet
+import java.util.Collections
 import java.util.Enumeration
 
 @Suppress("unused", "MemberVisibilityCanBePrivate")
@@ -273,6 +275,22 @@ object NetworkUtils {
         }
         return addressList
     }
+
+    /**
+     * 当前局域网 IPv4：优先 Wi-Fi / 热点网卡，避免取到移动数据或 VPN 地址。
+     * 拿不到时返回 null。
+     */
+    fun getLanIpv4(): String? = runCatching {
+        val wifiNames = setOf("wlan0", "wlan1", "ap0", "ap1")
+        val interfaces = Collections.list(NetworkInterface.getNetworkInterfaces())
+        fun ipOf(nif: NetworkInterface): String? = Collections.list(nif.inetAddresses)
+            .filterIsInstance<Inet4Address>()
+            .firstOrNull { !it.isLoopbackAddress && it.isSiteLocalAddress }
+            ?.hostAddress
+
+        interfaces.firstOrNull { it.isUp && it.name in wifiNames }?.let(::ipOf)
+            ?: interfaces.firstOrNull { it.isUp && !it.isLoopback }?.let(::ipOf)
+    }.getOrNull()
 
     /**
      * Check if valid IPV4 address.

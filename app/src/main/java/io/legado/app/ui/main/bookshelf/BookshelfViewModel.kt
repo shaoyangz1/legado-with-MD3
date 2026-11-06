@@ -7,6 +7,7 @@ import io.legado.app.R
 import io.legado.app.base.BaseViewModel
 import io.legado.app.constant.AppConst
 import io.legado.app.constant.AppLog
+import io.legado.app.constant.BookType
 import io.legado.app.constant.EventBus
 import io.legado.app.data.entities.Book
 import io.legado.app.data.entities.BookGroup
@@ -1334,6 +1335,11 @@ class BookshelfViewModel(
     }
 
     fun addBookByUrl(bookUrls: String) {
+        val input = bookUrls.trim()
+        if (input.startsWith("magnet:", ignoreCase = true)) {
+            addMagnetLink(input)
+            return
+        }
         loadingTextFlow.value = "添加中..."
         addBookJob = execute {
             val successCount = addBookUseCase.execute(bookUrls) {
@@ -1349,6 +1355,43 @@ class BookshelfViewModel(
         }.onFinally {
             loadingTextFlow.value = null
         }
+    }
+
+    /** 磁力直接存成一条 video 记录，点书架条目即可进入磁力播放页。 */
+    private fun addMagnetLink(magnet: String) {
+        execute {
+            bookRepository.insert(
+                Book(
+                    bookUrl = magnet,
+                    tocUrl = magnet,
+                    origin = MAGNET_ORIGIN,
+                    originName = "磁力",
+                    name = magnetDisplayName(magnet),
+                    type = BookType.video,
+                )
+            )
+        }.onSuccess {
+            showMessage(R.string.success)
+        }.onError {
+            AppLog.put("添加磁力出错\n${it.localizedMessage}", it, true)
+            showMessage("添加磁力失败")
+        }
+    }
+
+    private fun magnetDisplayName(magnet: String): String {
+        // magnet:?xt=... 是不带 authority 的 opaque URI，Uri.getQueryParameter 取不到参数，
+        // 只能自己拆查询串；dn 是种子显示名，优先用它。
+        val dn = magnet.substringAfter('?', "")
+            .substringBefore('#')
+            .split('&')
+            .firstOrNull { it.startsWith("dn=", ignoreCase = true) }
+            ?.substringAfter('=')
+            ?.let { Uri.decode(it) }
+            ?.takeIf { it.isNotBlank() }
+        if (dn != null) return dn
+        val hash = Regex("btih:([0-9a-fA-F]+)", RegexOption.IGNORE_CASE)
+            .find(magnet)?.groupValues?.getOrNull(1)
+        return if (hash != null) "磁力 ${hash.take(8)}" else "磁力链接"
     }
 
     fun exportToUri(uri: Uri, items: List<BookUiItem>) {
@@ -1431,6 +1474,10 @@ class BookshelfViewModel(
 
     private fun showMessage(message: String) {
         _effects.tryEmit(BookshelfEffect.ShowSnackbar(message))
+    }
+
+    private companion object {
+        const val MAGNET_ORIGIN = "magnet"
     }
 
 }

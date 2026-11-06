@@ -51,6 +51,7 @@ import io.legado.app.model.Download
 import io.legado.app.model.ReadAloudSessionStore
 import io.legado.app.model.ReadBook
 import io.legado.app.model.SourceCallBack
+import io.legado.app.model.VideoPlay
 import io.legado.app.service.AudioPlayService
 import io.legado.app.ui.about.AboutEffect
 import io.legado.app.ui.about.AboutScreen
@@ -547,7 +548,14 @@ fun MainActivity.mainEntryProvider(
                 onNavigateToRoute(MainRouteBookCacheManage)
             },
             onOpenBookshelfBook = { book, sharedCoverKey ->
-                if (book.isVideo) {
+                if (book.bookUrl.startsWith("magnet:", ignoreCase = true)) {
+                    onNavigateToRoute(
+                        MainRouteVideoPlay(
+                            magnetUrl = book.bookUrl,
+                            magnetTitle = book.name,
+                        )
+                    )
+                } else if (book.isVideo) {
                     onNavigateToRoute(
                         // 播放页是全屏画面，没有可共享的封面元素
                         MainRouteVideoPlay(bookUrl = book.bookUrl)
@@ -579,16 +587,22 @@ fun MainActivity.mainEntryProvider(
                 onNavigateToRoute(MainRouteSettingsBackup)
             },
             onNavigateToBookInfo = { name, author, bookUrl, origin, coverPath, sharedCoverKey ->
-                onNavigateToRoute(
-                    MainRouteBookInfo(
-                        name = name,
-                        author = author,
-                        bookUrl = bookUrl,
-                        origin = origin,
-                        coverPath = coverPath,
-                        sharedCoverKey = sharedCoverKey
+                if (bookUrl.startsWith("magnet:", ignoreCase = true)) {
+                    onNavigateToRoute(
+                        MainRouteVideoPlay(magnetUrl = bookUrl, magnetTitle = name)
                     )
-                )
+                } else {
+                    onNavigateToRoute(
+                        MainRouteBookInfo(
+                            name = name,
+                            author = author,
+                            bookUrl = bookUrl,
+                            origin = origin,
+                            coverPath = coverPath,
+                            sharedCoverKey = sharedCoverKey
+                        )
+                    )
+                }
             },
             onNavigateToExploreShow = { title, sourceUrl, exploreUrl ->
                 onNavigateToRoute(
@@ -1204,7 +1218,10 @@ fun MainActivity.mainEntryProvider(
                 type = 2,
             )
         }
-        if (bookUrl == null && rssArticle == null && route.magnetUrl == null) {
+        // 通知栏/悬浮小窗的「回到播放页」意图只带 bookUrl；磁力/直链会话没有书籍上下文，
+        // 只要会话还活着就继续展示，否则会被当成无效路由压栈后立即返回（详情页抖一下）。
+        val hasLiveSession = VideoPlay.playUrl != null
+        if (bookUrl == null && rssArticle == null && route.magnetUrl == null && !hasLiveSession) {
             LaunchedEffect(Unit) { onNavigateBack() }
         } else {
             // 播放页是栈底时（深链、恢复的栈）不能落到 navigateBack 的 finish() 分支：
@@ -1232,7 +1249,7 @@ fun MainActivity.mainEntryProvider(
                     magnetTitle = route.magnetTitle,
                     magnetAuthor = route.magnetAuthor,
                     magnetIntro = route.magnetIntro,
-                    initialCoverPath = route.coverPath,
+                    initialCoverPath = route.coverPath ?: VideoPlay.sessionCoverUrl,
                     sharedCoverKey = route.sharedCoverKey,
                     sharedTransitionScope = sharedTransitionScope,
                     animatedVisibilityScope = LocalNavAnimatedContentScope.current,

@@ -273,7 +273,8 @@
     <string name="can_not_share">Share failed</string>
     <string name="no_chapter">No chapters</string>
     <string name="add_url">Add URL</string>
-    <string name="add_book_url">Add book URL</string>
+    <string name="add_book_url">Add book URL or magnet</string>
+    <string name="add_book_url_hint">Enter URL, JSON or magnet link</string>
     <string name="background">Background</string>
     <string name="author">Author</string>
     <string name="author_show">%s</string>
@@ -3969,6 +3970,8 @@
     <string name="page_anim_google_curl">Google Curl</string>
     <string name="page_anim_parallax">Parallax</string>
     <string name="magnet_player_resolving">Resolving magnet…</string>
-    <string name="magnet_player_preparing">Connecting peers…</string>
     <string name="magnet_player_retry">Retry</string>
+    <string name="magnet_player_copy">Copy magnet link</string>
+    <string name="video_keep_magnet_service">Keep magnet service in background</string>
+    <string name="video_download">Download video</string>
 </resources>

@@ -10,6 +10,8 @@ import io.legado.app.help.thunder.ThunderEngine
 import io.legado.app.model.SourceCallBack
 import io.legado.app.model.VideoPlay
 import io.legado.app.service.VideoPlayService
+import io.legado.app.utils.NetworkUtils
+import io.legado.app.utils.openUrl
 import io.legado.app.utils.startService
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.collections.immutable.toPersistentList
@@ -50,6 +52,7 @@ class VideoPlayerViewModel : ViewModel() {
     private var magnetTitle: String? = null
     private var magnetAuthor: String? = null
     private var magnetIntro: String? = null
+    private var magnetCover: String? = null
     private var magnetFiles: List<ThunderEngine.MagnetFile> = emptyList()
     private var lastMagnetPlayUrl: String? = null
     private var magnetJob: Job? = null
@@ -120,6 +123,7 @@ class VideoPlayerViewModel : ViewModel() {
                 seekScreens = VideoPlay.seekScreensPerDuration,
                 showDanmaku = VideoPlay.danmakuShow,
                 floatingEnabled = VideoPlay.floatingEnabled,
+                keepMagnetService = VideoPlay.keepMagnetService,
             )
         }
     }
@@ -146,12 +150,19 @@ class VideoPlayerViewModel : ViewModel() {
     }
 
     /** 直链播放（磁力文件等）：没有书籍/章节上下文，界面其余部分与书籍播放一致。 */
-    fun initMagnet(url: String, title: String?, author: String?, intro: String?) {
+    fun initMagnet(
+        url: String,
+        title: String?,
+        author: String?,
+        intro: String?,
+        coverPath: String? = null,
+    ) {
         if (magnetUrl == url && _magnetState.value != null) return
         magnetUrl = url
         magnetTitle = title
         magnetAuthor = author
         magnetIntro = intro
+        magnetCover = coverPath
         resolveMagnet()
     }
 
@@ -188,14 +199,19 @@ class VideoPlayerViewModel : ViewModel() {
 
     fun playMagnet(index: Int) {
         val file = magnetFiles.firstOrNull { it.index == index } ?: return
-        if (_magnetState.value?.preparingIndex != null) return
+        val state = _magnetState.value
+        // 正在播的就是这个文件时不用重新建任务刷新，避免画面闪断
+        if (state?.playingIndex == index) return
+        if (state?.preparingIndex != null) return
         _magnetState.update { it?.copy(preparingIndex = index, error = null) }
         viewModelScope.launch {
             try {
                 val localUrl = ThunderEngine.play(file)
                 lastMagnetPlayUrl = localUrl
                 appCtx.startService<VideoPlayService> { action = IntentAction.play }
-                VideoPlay.openUrl(localUrl, magnetTitle, magnetAuthor, magnetIntro)
+                VideoPlay.openUrl(
+                    localUrl, magnetTitle, magnetAuthor, magnetIntro, magnetCover
+                )
                 _magnetState.update { it?.copy(preparingIndex = null, playingIndex = index) }
             } catch (e: CancellationException) {
                 throw e
@@ -250,6 +266,12 @@ class VideoPlayerViewModel : ViewModel() {
                 if (url != null) {
                     initializedBookUrl = null
                     init(url)
+                } else {
+                    // 磁力会话不走 initializedBookUrl，重试要重新向迅雷要本地流
+                    _magnetState.value?.playingIndex?.let { index ->
+                        _magnetState.update { it?.copy(playingIndex = null) }
+                        playMagnet(index)
+                    }
                 }
             }
 
@@ -282,12 +304,19 @@ class VideoPlayerViewModel : ViewModel() {
                     action = IntentAction.toggleVideoFloating
                 }
 
+            VideoPlayerIntent.ToggleKeepMagnetService -> {
+                VideoPlay.keepMagnetService = !VideoPlay.keepMagnetService
+                _uiState.update { it.copy(keepMagnetService = VideoPlay.keepMagnetService) }
+            }
+
             is VideoPlayerIntent.SetFloatingEnabled -> {
                 VideoPlay.floatingEnabled = intent.enabled
                 _uiState.update { it.copy(floatingEnabled = intent.enabled) }
             }
 
             VideoPlayerIntent.CopyPlayUrl -> copyPlayUrl()
+            VideoPlayerIntent.CopyMagnetLink -> copyMagnetLink()
+            VideoPlayerIntent.DownloadVideo -> downloadCurrent()
             VideoPlayerIntent.OpenInExternalPlayer -> openExternal()
             VideoPlayerIntent.OpenSourceLogin -> emitSource(
                 { VideoPlayerEffect.OpenSourceLogin(it) }
@@ -342,16 +371,46 @@ class VideoPlayerViewModel : ViewModel() {
         )
     }
 
-    private fun copyPlayUrl() {
-        val url = VideoPlay.playUrl
+    /** 磁力会话才给下载入口：把磁力链接交给系统磁力客户端。 */
+    private fun downloadCurrent() {
+        val url = magnetUrl ?: VideoPlay.playUrl
         if (url.isNullOrBlank()) {
             _effects.tryEmit(
                 VideoPlayerEffect.ShowToast(appCtx.getString(R.string.video_link_not_found))
             )
             return
         }
+        appCtx.openUrl(url)
+    }
+
+    private fun copyPlayUrl() {
+        val raw = VideoPlay.playUrl
+        if (raw.isNullOrBlank()) {
+            _effects.tryEmit(
+                VideoPlayerEffect.ShowToast(appCtx.getString(R.string.video_link_not_found))
+            )
+            return
+        }
+        // 开启「保持磁力后台服务」时复制局域网地址，同网段设备可直接播放
+        val url = if (VideoPlay.keepMagnetService) {
+            NetworkUtils.getLanIpv4()?.let { raw.replace("127.0.0.1", it) } ?: raw
+        } else {
+            raw
+        }
         // 书源可以接管复制行为，需要 Activity，交给宿主执行
         _effects.tryEmit(VideoPlayerEffect.CopyPlayUrl(url))
+    }
+
+    /** 磁力会话才有入口：复制原始磁力链接，再交给系统挑一个能打开磁力的应用。 */
+    private fun copyMagnetLink() {
+        val url = magnetUrl
+        if (url.isNullOrBlank()) {
+            _effects.tryEmit(
+                VideoPlayerEffect.ShowToast(appCtx.getString(R.string.video_link_not_found))
+            )
+            return
+        }
+        _effects.tryEmit(VideoPlayerEffect.CopyMagnetLink(url))
     }
 
     private fun openExternal() {
@@ -370,11 +429,13 @@ class VideoPlayerViewModel : ViewModel() {
     override fun onCleared() {
         // 离开播放页不等于停止播放：只把进度落库，播放交给服务继续
         VideoPlay.saveRead()
-        // 磁力流可能还在悬浮窗/后台播放，此时清理会让画面断流；
-        // 留着任务，等下次解析或进程退出时收尾。
-        val url = lastMagnetPlayUrl
-        if (url == null || VideoPlay.playUrl != url || !VideoPlay.state.value.isPlaying) {
-            ThunderEngine.stop()
+        // 磁力流可能还在悬浮窗/后台播放，或用户开启了「保持后台服务」给局域网拉流：
+        // 这两种情况都不清理 BT 任务，留给下次解析或进程退出时收尾。
+        if (!VideoPlay.keepMagnetService) {
+            val url = lastMagnetPlayUrl
+            if (url == null || VideoPlay.playUrl != url || !VideoPlay.state.value.isPlaying) {
+                ThunderEngine.stop()
+            }
         }
         super.onCleared()
     }

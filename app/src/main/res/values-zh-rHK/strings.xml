@@ -187,7 +187,8 @@
     <string name="can_not_share">分享失敗</string>
     <string name="no_chapter">無章節</string>
     <string name="add_url">添加網址</string>
-    <string name="add_book_url">添加書輯網址</string>
+    <string name="add_book_url">添加書籍網址或磁力</string>
+    <string name="add_book_url_hint">請輸入 URL、JSON 或磁力連結</string>
     <string name="background">背景</string>
     <string name="author">作者</string>
     <string name="author_show">%s</string>
@@ -3091,6 +3092,8 @@
     <string name="page_anim_google_curl">Google仿真</string>
     <string name="page_anim_parallax">視差</string>
     <string name="magnet_player_resolving">正在解析磁力…</string>
-    <string name="magnet_player_preparing">正在連接節點…</string>
     <string name="magnet_player_retry">重試</string>
+    <string name="magnet_player_copy">複製磁力</string>
+    <string name="video_keep_magnet_service">保持磁力後台服務</string>
+    <string name="video_download">下載影片</string>
 </resources>

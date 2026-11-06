@@ -117,6 +117,22 @@ class ExploreShowPageParamTest {
     }
 
     @Test
+    fun appendsPageWhenBarePathTemplateMeetsAlphanumericId() {
+        assertEquals(
+            "https://example.com/tag/155t/2",
+            "https://example.com/tag/155t".withPageParam(2, "/{page}"),
+        )
+    }
+
+    @Test
+    fun appendsPageWhenBarePathTemplateMeetsNumericId() {
+        assertEquals(
+            "https://example.com/tag/1/2",
+            "https://example.com/tag/1".withPageParam(2, "/{page}"),
+        )
+    }
+
+    @Test
     fun replacesLastNumericSegmentNotEarlierDigits() {
         assertEquals(
             "https://example.com/type/2d/3/",

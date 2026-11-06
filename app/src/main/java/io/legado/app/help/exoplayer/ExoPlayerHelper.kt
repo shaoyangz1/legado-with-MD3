@@ -3,8 +3,10 @@ package io.legado.app.help.exoplayer
 import android.annotation.SuppressLint
 import android.content.Context
 import android.net.Uri
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
+import androidx.media3.datasource.HttpDataSource
 import androidx.media3.database.StandaloneDatabaseProvider
 import androidx.media3.datasource.FileDataSource
 import androidx.media3.datasource.ResolvingDataSource
@@ -17,6 +19,8 @@ import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
+import androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy
 import com.google.gson.reflect.TypeToken
 import io.legado.app.help.http.okHttpClient
 import io.legado.app.utils.GSON
@@ -25,6 +29,7 @@ import okhttp3.CacheControl
 import okhttp3.Dns
 import splitties.init.appCtx
 import java.io.File
+import java.io.IOException
 import java.net.Inet4Address
 import java.net.InetAddress
 import java.util.concurrent.TimeUnit
@@ -35,6 +40,11 @@ import java.util.concurrent.TimeUnit
 object ExoPlayerHelper {
 
     private const val SPLIT_TAG = "\uD83D\uDEA7"
+
+    /** \u672C\u5730\u6D41\u91CD\u8BD5\uFF1A30 \u6B21\uFF0C\u6BCF\u6B21 1 \u79D2\uFF0C\u7ED9 BT \u7559\u51FA\u628A\u76EE\u6807\u4F4D\u7F6E\u4E0B\u8F7D\u51FA\u6765\u7684\u65F6\u95F4\u3002 */
+    private const val LOCAL_STREAM_RETRY_COUNT = 30
+    private const val LOCAL_STREAM_RETRY_DELAY_MS = 1_000L
+    private val LOCAL_STREAM_HOSTS = setOf("127.0.0.1", "localhost", "::1")
 
     private val mapType by lazy {
         object : TypeToken<Map<String, String>>() {}.type
@@ -62,8 +72,29 @@ object ExoPlayerHelper {
         ).setMediaSourceFactory(
             DefaultMediaSourceFactory(context)
                 .setDataSourceFactory(resolvingDataSource)
+                .setLoadErrorHandlingPolicy(mediaLoadErrorPolicy)
                 .setLiveTargetOffsetMs(5000)
         ).build()
+    }
+
+    /**
+     * 迅雷磁力的本地流只能读出已下载的部分：拖到还没下到的位置，本地服务直接回 404。
+     * 默认策略重试三次（约 3 秒）就放弃，表现成「进度条拉快一点就报链接 404」。
+     * 这里只给本地流放宽重试窗口，等 BT 把目标位置下载出来；普通网络流仍走默认策略。
+     */
+    internal fun localStreamRetryDelayMs(error: IOException, errorCount: Int): Long? {
+        val httpError = error as? HttpDataSource.HttpDataSourceException ?: return null
+        if (httpError.dataSpec.uri.host !in LOCAL_STREAM_HOSTS) return null
+        val code = (httpError as? HttpDataSource.InvalidResponseCodeException)?.responseCode
+        if (code != 404 && code != 416) return null
+        return if (errorCount <= LOCAL_STREAM_RETRY_COUNT) LOCAL_STREAM_RETRY_DELAY_MS
+        else C.TIME_UNSET
+    }
+
+    private val mediaLoadErrorPolicy = object : DefaultLoadErrorHandlingPolicy() {
+        override fun getRetryDelayMsFor(loadErrorInfo: LoadErrorHandlingPolicy.LoadErrorInfo): Long =
+            localStreamRetryDelayMs(loadErrorInfo.exception, loadErrorInfo.errorCount)
+                ?: super.getRetryDelayMsFor(loadErrorInfo)
     }
 
 

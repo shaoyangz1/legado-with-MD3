@@ -38,6 +38,8 @@ data class VideoPlayerUiState(
     /** 横向滑动调进度：拖多少屏宽等于整段时长，值越大越迟钝。 */
     val seekScreens: Float = 6f,
     val floatingEnabled: Boolean = false,
+    /** 磁力播放：离开播放页/暂停后仍保留 BT 任务与本地流，局域网设备可继续拉流。 */
+    val keepMagnetService: Boolean = false,
     val sheet: VideoPlayerSheet? = null,
     /** 当前会话的书源地址；RSS 文章与直链播放为空。 */
     val bookSourceUrl: String = "",
@@ -125,10 +127,18 @@ sealed interface VideoPlayerIntent {
     /** 手动切换悬浮小窗。 */
     data object ToggleFloating : VideoPlayerIntent
 
+    data object ToggleKeepMagnetService : VideoPlayerIntent
+
     data class SetFloatingEnabled(val enabled: Boolean) : VideoPlayerIntent
 
     /** 复制当前集的真实地址；走书源回调，与阅读/音频一致。 */
     data object CopyPlayUrl : VideoPlayerIntent
+
+    /** 复制磁力链接，并交给系统选择能打开磁力的应用。 */
+    data object CopyMagnetLink : VideoPlayerIntent
+
+    /** 下载当前播放地址到系统下载目录（仅直链）。 */
+    data object DownloadVideo : VideoPlayerIntent
 
     /** 交给系统播放器播放当前地址。 */
     data object OpenInExternalPlayer : VideoPlayerIntent
@@ -155,6 +165,9 @@ sealed interface VideoPlayerEffect {
      * 需要 Activity，所以交给宿主执行。
      */
     data class CopyPlayUrl(val url: String) : VideoPlayerEffect
+
+    /** 复制磁力链接并弹出磁力客户端选择器；需要 Activity，交给宿主执行。 */
+    data class CopyMagnetLink(val url: String) : VideoPlayerEffect
 
     data class OpenExternalPlayer(val url: String, val title: String?) : VideoPlayerEffect
 
