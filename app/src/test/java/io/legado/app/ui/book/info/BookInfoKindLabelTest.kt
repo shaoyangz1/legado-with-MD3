@@ -54,4 +54,28 @@ class BookInfoKindLabelTest {
     fun keepsLabelWithoutSeparator() {
         assertEquals("连载" to null, parseKindTagLabel("连载"))
     }
+
+    @Test
+    fun splitsRowsOnStandaloneSeparator() {
+        assertEquals(
+            listOf(listOf("玄幻", "连载"), listOf("完结")),
+            splitKindTagRows(listOf("玄幻", "连载", "|", "完结"))
+        )
+    }
+
+    @Test
+    fun keepsSingleRowWithoutSeparator() {
+        assertEquals(
+            listOf(listOf("玄幻", "连载")),
+            splitKindTagRows(listOf("玄幻", "连载"))
+        )
+    }
+
+    @Test
+    fun dropsEmptyRows() {
+        assertEquals(
+            listOf(listOf("玄幻")),
+            splitKindTagRows(listOf("|", "玄幻", "|"))
+        )
+    }
 }

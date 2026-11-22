@@ -52,6 +52,7 @@ import io.legado.app.model.ReadAloudSessionStore
 import io.legado.app.model.ReadBook
 import io.legado.app.feature.about.ThirdPartyLicensesScreen
 import io.legado.app.model.SourceCallBack
+import io.legado.app.model.VideoPlay
 import io.legado.app.service.AudioPlayService
 import io.legado.app.ui.about.AboutEffect
 import io.legado.app.ui.about.AboutScreen
@@ -552,7 +553,14 @@ fun MainActivity.mainEntryProvider(
                 onNavigateToRoute(MainRouteBookCacheManage)
             },
             onOpenBookshelfBook = { book, sharedCoverKey ->
-                if (book.isVideo) {
+                if (book.bookUrl.startsWith("magnet:", ignoreCase = true)) {
+                    onNavigateToRoute(
+                        MainRouteVideoPlay(
+                            magnetUrl = book.bookUrl,
+                            magnetTitle = book.name,
+                        )
+                    )
+                } else if (book.isVideo) {
                     onNavigateToRoute(
                         // 播放页是全屏画面，没有可共享的封面元素
                         MainRouteVideoPlay(bookUrl = book.bookUrl)
@@ -584,16 +592,22 @@ fun MainActivity.mainEntryProvider(
                 onNavigateToRoute(MainRouteSettingsBackup)
             },
             onNavigateToBookInfo = { name, author, bookUrl, origin, coverPath, sharedCoverKey ->
-                onNavigateToRoute(
-                    MainRouteBookInfo(
-                        name = name,
-                        author = author,
-                        bookUrl = bookUrl,
-                        origin = origin,
-                        coverPath = coverPath,
-                        sharedCoverKey = sharedCoverKey
+                if (bookUrl.startsWith("magnet:", ignoreCase = true)) {
+                    onNavigateToRoute(
+                        MainRouteVideoPlay(magnetUrl = bookUrl, magnetTitle = name)
                     )
-                )
+                } else {
+                    onNavigateToRoute(
+                        MainRouteBookInfo(
+                            name = name,
+                            author = author,
+                            bookUrl = bookUrl,
+                            origin = origin,
+                            coverPath = coverPath,
+                            sharedCoverKey = sharedCoverKey
+                        )
+                    )
+                }
             },
             onNavigateToExploreShow = { title, sourceUrl, exploreUrl ->
                 onNavigateToRoute(
@@ -1222,7 +1236,10 @@ fun MainActivity.mainEntryProvider(
                 type = 2,
             )
         }
-        if (bookUrl == null && rssArticle == null) {
+        // 通知栏/悬浮小窗的「回到播放页」意图只带 bookUrl；磁力/直链会话没有书籍上下文，
+        // 只要会话还活着就继续展示，否则会被当成无效路由压栈后立即返回（详情页抖一下）。
+        val hasLiveSession = VideoPlay.playUrl != null
+        if (bookUrl == null && rssArticle == null && route.magnetUrl == null && !hasLiveSession) {
             LaunchedEffect(Unit) { onNavigateBack() }
         } else {
             // 播放页是栈底时（深链、恢复的栈）不能落到 navigateBack 的 finish() 分支：
@@ -1240,17 +1257,20 @@ fun MainActivity.mainEntryProvider(
                     backStack.add(MainRouteHome)
                 }
             }
-            // 与阅读器入口一致：未授权时播放器不会被组合，也就不会初始化或显示书名/章节名
-            PrivateReadGate(
-                bookUrl = bookUrl ?: rssArticle!!.link,
-                onExit = exitVideoRoute,
-                onOpenLocalPasswordSettings = {
-                    onNavigateToRoute(MainRouteSettingsPrivate)
-                },
-            ) {
+            // 与阅读器入口一致：未授权时播放器不会被组合，也就不会初始化或显示书名/章节名。
+            // 直链（磁力文件）没有书籍上下文，不需要过私密内容闸门。
+            val playerContent: @Composable () -> Unit = {
                 VideoPlayerScreen(
                     bookUrl = bookUrl,
                     rssArticle = rssArticle,
+                    magnetUrl = route.magnetUrl,
+                    magnetTitle = route.magnetTitle,
+                    magnetAuthor = route.magnetAuthor,
+                    magnetIntro = route.magnetIntro,
+                    initialCoverPath = route.coverPath ?: VideoPlay.sessionCoverUrl,
+                    sharedCoverKey = route.sharedCoverKey,
+                    sharedTransitionScope = sharedTransitionScope,
+                    animatedVisibilityScope = LocalNavAnimatedContentScope.current,
                     onBack = exitVideoRoute,
                     onOpenSourceLogin = { sourceUrl ->
                         onNavigateToRoute(
@@ -1261,6 +1281,20 @@ fun MainActivity.mainEntryProvider(
                         onNavigateToRoute(MainRouteBookSourceEdit(sourceUrl))
                     },
                 )
+            }
+            val privateGateKey = bookUrl ?: rssArticle?.link
+            if (privateGateKey != null) {
+                PrivateReadGate(
+                    bookUrl = privateGateKey,
+                    onExit = exitVideoRoute,
+                    onOpenLocalPasswordSettings = {
+                        onNavigateToRoute(MainRouteSettingsPrivate)
+                    },
+                ) {
+                    playerContent()
+                }
+            } else {
+                playerContent()
             }
         }
     }
@@ -1524,7 +1558,16 @@ fun MainActivity.mainEntryProvider(
                 popped
             },
             onOpenSearch = { keyword ->
-                onNavigateToRoute(MainRouteSearch(key = keyword))
+                // 从本书的作者/书名/标签发起搜索时，默认勾选当前书源
+                val source = bookInfoViewModel.bookSource
+                onNavigateToRoute(
+                    MainRouteSearch(
+                        key = keyword,
+                        scopeRaw = source?.let {
+                            BookSearchScope.encodeSource(it.bookSourceName, it.bookSourceUrl)
+                        },
+                    )
+                )
             },
             onOpenBookSourceEdit = { sourceUrl ->
                 onNavigateToRoute(MainRouteBookSourceEdit(sourceUrl))
@@ -1535,6 +1578,17 @@ fun MainActivity.mainEntryProvider(
             // 私密内容需要本地密码：直接把人送到私密设置页，而不是只弹一句提示
             onOpenSettings = {
                 onNavigateToRoute(MainRouteSettingsPrivate)
+            },
+            onOpenMagnetPlayer = { url, title, coverPath, author, intro ->
+                onNavigateToRoute(
+                    MainRouteVideoPlay(
+                        magnetUrl = url,
+                        magnetTitle = title,
+                        magnetAuthor = author,
+                        magnetIntro = intro,
+                        coverPath = coverPath,
+                    )
+                )
             },
             onOpenReader = { bookUrl, inBookshelf, chapterChanged ->
                 onNavigateToRoute(
@@ -1570,11 +1624,13 @@ fun MainActivity.mainEntryProvider(
                     )
                 )
             },
-            onOpenVideoPlayer = { bookUrl, inBookshelf ->
+            onOpenVideoPlayer = { bookUrl, inBookshelf, coverPath, sharedKey ->
                 onNavigateToRoute(
                     MainRouteVideoPlay(
                         bookUrl = bookUrl,
                         inBookshelf = inBookshelf,
+                        coverPath = coverPath,
+                        sharedCoverKey = sharedKey ?: bookCoverSharedElementKey(bookUrl),
                     )
                 )
             },

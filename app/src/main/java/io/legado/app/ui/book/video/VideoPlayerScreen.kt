@@ -4,14 +4,19 @@ import android.app.Activity
 import android.app.PictureInPictureParams
 import android.content.Intent
 import android.content.pm.ActivityInfo
+import android.media.AudioManager
+import android.provider.Settings
 import android.util.Rational
 import android.view.View
 import android.view.LayoutInflater
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.LocalActivity
 import androidx.appcompat.app.AppCompatActivity
+import androidx.compose.animation.AnimatedVisibilityScope
+import androidx.compose.animation.SharedTransitionScope
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -23,6 +28,7 @@ import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -47,15 +53,20 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
+import androidx.compose.material.icons.filled.Brightness6
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
+import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -71,11 +82,15 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.AwaitPointerEventScope
+import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
-import androidx.compose.ui.platform.LocalWindowInfo
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.role
@@ -97,6 +112,7 @@ import io.legado.app.constant.BookType
 import io.legado.app.data.entities.RssArticle
 import io.legado.app.model.SourceCallBack
 import io.legado.app.model.VideoPlay
+import io.legado.app.service.VideoPlayService
 import io.legado.app.ui.main.MainActivity
 import io.legado.app.ui.theme.LegadoTheme
 import io.legado.app.ui.widget.components.AppSlider
@@ -105,9 +121,12 @@ import io.legado.app.ui.widget.components.button.series.MediumTonalButton
 import io.legado.app.ui.widget.components.button.series.SmallTonalButton
 import io.legado.app.ui.widget.components.card.GlassCard
 import io.legado.app.ui.widget.components.card.NormalCard
+import io.legado.app.ui.widget.components.card.TextCard
+import io.legado.app.ui.widget.components.progressIndicator.AppCircularProgressIndicator
 import io.legado.app.ui.widget.components.icon.AppIcon
 import io.legado.app.ui.widget.components.icon.AppIcons
 import io.legado.app.ui.widget.components.image.cover.CoilBookCover
+import io.legado.app.ui.widget.components.image.cover.cachedCoverAspectRatio
 import io.legado.app.ui.widget.components.menuItem.RoundDropdownMenu
 import io.legado.app.ui.widget.components.menuItem.RoundDropdownMenuItem
 import io.legado.app.ui.widget.components.modalBottomSheet.AppModalBottomSheet
@@ -135,8 +154,41 @@ private const val VIDEO_FULLSCREEN_SIZE_ANIM_MILLIS = 300
 /** 控制浮层显隐的淡入淡出时长。 */
 private const val VIDEO_CONTROLS_FADE_MILLIS = 180
 
-/** 默认 16:9 高度最多占屏幕高的比例：横屏窗口下 16:9 会比屏幕还高，压一层留信息区。 */
-private const val PLAYER_DEFAULT_MAX_RATIO = 0.58f
+/** 横向拖动多少屏宽才相当于整段视频时长；值越大，进度变化越迟钝。 */
+private const val DEFAULT_SEEK_SCREENS_PER_DURATION = 6f
+
+/** 锁定只关闭进度手势，亮度/音量不受影响。 */
+internal fun videoProgressSeekingEnabled(gestureLocked: Boolean): Boolean = !gestureLocked
+
+/** 播放页首帧就确定封面布局比例，避免图片加载回调改变高度造成上下留白跳动。 */
+internal fun videoPlayerInitialCoverAspectRatio(cachedRatio: Float?): Float =
+    cachedRatio?.takeIf { it.isFinite() && it > 0f } ?: (5f / 7f)
+
+/** 等目标书的播放会话准备好之前，忽略 VideoPlay 单例中残留的上一册封面。 */
+internal fun resolveVideoCoverUrl(
+    requestedBookUrl: String?,
+    sessionBookUrl: String,
+    sessionCoverUrl: String,
+    fallbackCoverUrl: String?,
+): String = when {
+    requestedBookUrl.isNullOrBlank() -> fallbackCoverUrl.orEmpty()
+    requestedBookUrl != sessionBookUrl -> fallbackCoverUrl.orEmpty()
+    sessionCoverUrl.isNotBlank() -> sessionCoverUrl
+    else -> fallbackCoverUrl.orEmpty()
+}
+
+/** 纵向拖动时屏幕上显示的亮度/音量指示。 */
+@Stable
+private sealed interface VideoMediaOverlay {
+    val fraction: Float
+
+    data class Brightness(override val fraction: Float) : VideoMediaOverlay
+
+    data class Volume(override val fraction: Float) : VideoMediaOverlay
+}
+
+/** 竖屏默认播放区占屏幕高的比例：比 16:9 高一些，画面更大，信息区起始更靠下。 */
+private const val PLAYER_DEFAULT_HEIGHT_RATIO = 0.4f
 
 /** 播放区拉高时给下方信息区留出的最小高度（dp），避免把信息区挤成一条缝。 */
 private const val PLAYER_BOTTOM_RESERVE_DP = 96f
@@ -154,26 +206,28 @@ private const val INTRO_EXPAND_ANIM_MILLIS = 220
 private val VideoSize.isPortrait: Boolean
     get() = width > 0 && height > 0 && width.toFloat() * pixelWidthHeightRatio < height
 
-/**
- * 让画面正好填满 [widthDp] 所需的高度（dp），即「贴合视频比例」的高度：
- * 到这个高度黑边收完，再高只会重新长出上下黑边。片源尺寸未知时返回 null。
- */
-private fun VideoSize.fitHeight(widthDp: Float): Float? {
-    val displayWidth = width.toFloat() * pixelWidthHeightRatio
-    if (displayWidth <= 0f || height <= 0) return null
-    return widthDp * height / displayWidth
-}
-
 @Composable
 fun VideoPlayerScreen(
     bookUrl: String? = null,
     rssArticle: RssArticle? = null,
+    /** 磁力播放：在播放页内解析文件列表，默认播放最大的那个。 */
+    magnetUrl: String? = null,
+    magnetTitle: String? = null,
+    magnetAuthor: String? = null,
+    magnetIntro: String? = null,
     onBack: () -> Unit,
     onOpenSourceLogin: (String) -> Unit = {},
     onOpenSourceEdit: (String) -> Unit = {},
+    /** 详情页已加载到的封面：首帧先用它，避免先闪默认封面再刷新。 */
+    initialCoverPath: String? = null,
+    /** 与详情页共用的封面共享元素 key：封面从详情页平滑飞入。 */
+    sharedCoverKey: String? = null,
+    sharedTransitionScope: SharedTransitionScope? = null,
+    animatedVisibilityScope: AnimatedVisibilityScope? = null,
     viewModel: VideoPlayerViewModel = koinViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val magnetState = viewModel.magnetState.collectAsStateWithLifecycle().value
     // 进度单独一条流：500ms 一拍。这里只拿 State、不在这里读值，
     // 读取下放到进度条那一小块，否则整页（含信息区）每 500ms 都要重组一次。
     val progressState = viewModel.progress.collectAsStateWithLifecycle(VideoPlaybackProgress())
@@ -187,13 +241,44 @@ fun VideoPlayerScreen(
     }
     var controlsVisible by remember { mutableStateOf(true) }
     var menuExpanded by remember { mutableStateOf(false) }
+    var progressGestureLocked by remember { mutableStateOf(false) }
+    val progressSeekingEnabled by rememberUpdatedState(
+        videoProgressSeekingEnabled(progressGestureLocked)
+    )
+    LaunchedEffect(state.isFullscreen) {
+        if (!state.isFullscreen) progressGestureLocked = false
+    }
+    // 手势在 pointerInput(Unit) 里持有，设置项改了之后也要即时生效
+    val seekScreens by rememberUpdatedState(state.seekScreens)
+    // 拖动进度条时的中央时间预览，以及纵向调亮度/音量时的中央指示
+    var seekPreview by remember { mutableStateOf<VideoSeekPreview?>(null) }
+    var mediaOverlay by remember { mutableStateOf<VideoMediaOverlay?>(null) }
+    val audioManager = remember { context.getSystemService(AudioManager::class.java) }
+    val maxVolume = remember(audioManager) {
+        audioManager?.getStreamMaxVolume(AudioManager.STREAM_MUSIC)?.coerceAtLeast(1) ?: 1
+    }
+
+    fun windowBrightnessFraction(): Float {
+        val window = activity?.window ?: return 0.5f
+        val current = window.attributes.screenBrightness
+        return if (current >= 0f) {
+            current
+        } else {
+            Settings.System.getInt(
+                context.contentResolver, Settings.System.SCREEN_BRIGHTNESS, 128
+            ) / 255f
+        }
+    }
     // 播放区高度：默认 16:9，拖底部把手可把它拉高到贴合视频比例，把黑边收掉。
     // null 表示还没被拖动过，用默认 16:9；拖动中关掉尺寸动画，否则会跟不上手。
     var playerHeightDp by remember { mutableStateOf<Float?>(null) }
     var draggingPlayerHeight by remember { mutableStateOf(false) }
 
-    LaunchedEffect(bookUrl, rssArticle) {
+    LaunchedEffect(bookUrl, rssArticle, magnetUrl) {
         when {
+            magnetUrl != null -> viewModel.initMagnet(
+                magnetUrl, magnetTitle, magnetAuthor, magnetIntro, initialCoverPath
+            )
             rssArticle != null -> viewModel.initRss(rssArticle)
             bookUrl != null -> viewModel.init(bookUrl)
         }
@@ -204,6 +289,10 @@ fun VideoPlayerScreen(
             when (effect) {
                 is VideoPlayerEffect.ShowToast -> context.toastOnUi(effect.message)
                 is VideoPlayerEffect.CopyPlayUrl -> copyPlayUrl(context, effect.url)
+                is VideoPlayerEffect.CopyMagnetLink -> {
+                    context.sendToClip(effect.url)
+                    openMagnetAppChooser(context, effect.url)
+                }
                 is VideoPlayerEffect.OpenExternalPlayer -> openExternalPlayer(
                     context, effect.url, effect.title
                 )
@@ -231,7 +320,30 @@ fun VideoPlayerScreen(
     }
 
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
-        playerViewRef?.player = VideoPlay.player
+        // 悬浮小窗开着时由小窗渲染，页面不要抢 player
+        if (!VideoPlayService.isFloatingVisible) {
+            playerViewRef?.let { playerView ->
+                // 同一个 player 重复 setPlayer 时 media3 不会重建画面，先摘再挂
+                playerView.player = null
+                playerView.player = VideoPlay.player
+            }
+        }
+        // 从后台回来系统栏会被系统恢复，全屏状态下补藏一次
+        if (state.isFullscreen) {
+            activity?.window?.let { window ->
+                WindowCompat.getInsetsController(window, window.decorView)
+                    .hide(WindowInsetsCompat.Type.systemBars())
+            }
+        }
+    }
+
+    // 悬浮小窗显隐时在「页面 PlayerView」和「小窗」之间移交画面，
+    // 两个 PlayerView 同时绑定同一个 ExoPlayer 会让页面画面停在最后一帧。
+    val floatingVisible = VideoPlayService.isFloatingVisible
+    LaunchedEffect(floatingVisible, playerViewRef) {
+        val playerView = playerViewRef ?: return@LaunchedEffect
+        playerView.player = null
+        if (!floatingVisible) playerView.player = VideoPlay.player
     }
 
     DisposableEffect(Unit) {
@@ -263,7 +375,17 @@ fun VideoPlayerScreen(
         awaitDispose { player.removeListener(listener) }
     }
 
-    LaunchedEffect(state.isFullscreen, activity, videoSize) {
+    val configuration = LocalConfiguration.current
+    // 旋转 / 分屏后窗口会重建 insets 控制器状态，系统栏可能被重新显示；
+    // 把配置纳入 key，窗口稳定后再藏一次。
+    LaunchedEffect(
+        state.isFullscreen,
+        activity,
+        videoSize,
+        configuration.orientation,
+        configuration.screenWidthDp,
+        configuration.screenHeightDp,
+    ) {
         val window = activity?.window ?: return@LaunchedEffect
         val controller = WindowCompat.getInsetsController(window, window.decorView)
         if (state.isFullscreen) {
@@ -327,24 +449,12 @@ fun VideoPlayerScreen(
     }
 
     val fullscreen = state.isFullscreen
-    // 播放区高度：默认 16:9（横屏窗口下再压一层，别把信息区挤没），拖底部把手可以拉高到
-    // 「贴合视频比例」——到那个高度画面正好填满宽度，竖屏片源的左右黑边就收完了；
-    // 再往上拉只会重新长出上下黑边，所以它就是上限。信息区保底高度是另一条上限，
-    // 极端的细长片源（9:21）不会把下方内容压没。
-    // 窗口容器尺寸：分屏/折叠屏/桌面窗口下物理屏尺寸会大于实际可用区域
-    val windowSize = LocalWindowInfo.current.containerSize
-    val screenWidthDp = with(LocalDensity.current) { windowSize.width.toDp().value }
-    val screenHeightDp = with(LocalDensity.current) { windowSize.height.toDp().value }
-    val playerDefaultHeight = minOf(
-        screenWidthDp * 9f / 16f,
-        screenHeightDp * PLAYER_DEFAULT_MAX_RATIO,
-    )
-    val playerCapHeight = (screenHeightDp - PLAYER_BOTTOM_RESERVE_DP)
+    // 播放区高度：默认占屏高 40%，拖底部把手可以继续拉高；
+    // 上限只受「信息区保底高度」约束，横屏片源也能一路拉到接近满屏。
+    val screenHeightDp = configuration.screenHeightDp.toFloat()
+    val playerDefaultHeight = screenHeightDp * PLAYER_DEFAULT_HEIGHT_RATIO
+    val playerMaxHeight = (screenHeightDp - PLAYER_BOTTOM_RESERVE_DP)
         .coerceAtLeast(playerDefaultHeight)
-    val playerMaxHeight = minOf(
-        videoSize.fitHeight(screenWidthDp) ?: playerCapHeight,
-        playerCapHeight,
-    ).coerceAtLeast(playerDefaultHeight)
     val playerHeight = (playerHeightDp ?: playerDefaultHeight)
         .coerceIn(playerDefaultHeight, playerMaxHeight)
     Box(
@@ -374,7 +484,7 @@ fun VideoPlayerScreen(
                         }
                     ),
             ) {
-                // 播放器常驻顶部：竖屏是一块可拉高的 16:9 区域，全屏/画中画铺满。
+                // 播放器常驻顶部：竖屏是一块可拉高的固定高度区域，全屏/画中画铺满。
                 // 三种状态复用同一个 PlayerView，只改约束，不重建播放器
                 Box(
                     modifier = when {
@@ -405,18 +515,47 @@ fun VideoPlayerScreen(
                     )
 
                     // 画面手势层：压在 PlayerView 上但压不住下面的控制浮层。
-                    // 单击切换控制条，长按临时提速。
+                    // 单击切换控制条，长按临时提速，横向拖动调进度，纵向左半边调亮度、右半边调音量。
                     if (!inPip) {
                         Box(
                             modifier = Modifier
                                 .fillMaxSize()
                                 .pointerInput(Unit) {
+                                    val touchSlop = viewConfiguration.touchSlop
                                     awaitEachGesture {
-                                        awaitFirstDown()
-                                        val up = withTimeoutOrNull(
+                                        val down = awaitFirstDown()
+                                        val startX = down.position.x
+                                        val startY = down.position.y
+                                        val leftSide = startX < size.width / 2f
+
+                                        var tapped = false
+                                        // 手势方向在越过触摸阈值后才确定，之前一律按单击/长按处理
+                                        val firstMove = withTimeoutOrNull(
                                             viewConfiguration.longPressTimeoutMillis
-                                        ) { waitForUpOrCancellation() }
-                                        if (up == null) {
+                                        ) {
+                                            while (true) {
+                                                val event = awaitPointerEvent()
+                                                val change = event.changes
+                                                    .firstOrNull { it.id == down.id }
+                                                if (change == null || !change.pressed) {
+                                                    tapped = true
+                                                    return@withTimeoutOrNull null
+                                                }
+                                                val dx = change.position.x - startX
+                                                val dy = change.position.y - startY
+                                                if (abs(dx) > touchSlop || abs(dy) > touchSlop) {
+                                                    return@withTimeoutOrNull change
+                                                }
+                                            }
+                                            @Suppress("UNREACHABLE_CODE")
+                                            null
+                                        }
+
+                                        if (tapped) {
+                                            controlsVisible = !controlsVisible
+                                            return@awaitEachGesture
+                                        }
+                                        if (firstMove == null) {
                                             // 长按：临时提速，抬手恢复
                                             viewModel.onIntent(
                                                 VideoPlayerIntent.LongPressSpeed(true)
@@ -425,12 +564,99 @@ fun VideoPlayerScreen(
                                             viewModel.onIntent(
                                                 VideoPlayerIntent.LongPressSpeed(false)
                                             )
-                                        } else {
-                                            controlsVisible = !controlsVisible
+                                            return@awaitEachGesture
                                         }
+
+                                        val horizontal =
+                                            abs(firstMove.position.x - startX) >=
+                                                abs(firstMove.position.y - startY)
+                                        if (horizontal) {
+                                            if (!progressSeekingEnabled) {
+                                                var change = firstMove ?: return@awaitEachGesture
+                                                while (change.pressed) {
+                                                    change.consume()
+                                                    change = awaitPointerEvent().changes
+                                                        .firstOrNull { it.id == down.id } ?: break
+                                                }
+                                                return@awaitEachGesture
+                                            }
+                                            dragToSeek(
+                                                down = down,
+                                                firstMove = firstMove,
+                                                seekScreens = seekScreens,
+                                                onPreview = { seekPreview = it },
+                                                onSeek = {
+                                                    viewModel.onIntent(
+                                                        VideoPlayerIntent.SeekTo(it)
+                                                    )
+                                                },
+                                            )
+                                            return@awaitEachGesture
+                                        }
+                                        dragToBrightnessOrVolume(
+                                            down = down,
+                                            firstMove = firstMove,
+                                            leftSide = leftSide,
+                                            startBrightness = windowBrightnessFraction(),
+                                            startVolume = audioManager?.getStreamVolume(
+                                                AudioManager.STREAM_MUSIC
+                                            ) ?: 0,
+                                            maxVolume = maxVolume,
+                                        ) { fraction ->
+                                            if (leftSide) {
+                                                activity?.window?.let { window ->
+                                                    val attrs = window.attributes
+                                                    attrs.screenBrightness = fraction
+                                                    window.attributes = attrs
+                                                }
+                                                mediaOverlay =
+                                                    VideoMediaOverlay.Brightness(fraction)
+                                            } else {
+                                                val target = (fraction * maxVolume)
+                                                    .roundToInt().coerceIn(0, maxVolume)
+                                                audioManager?.setStreamVolume(
+                                                    AudioManager.STREAM_MUSIC, target, 0
+                                                )
+                                                mediaOverlay = VideoMediaOverlay.Volume(
+                                                    target.toFloat() / maxVolume
+                                                )
+                                            }
+                                        }
+                                        mediaOverlay = null
                                     }
                                 },
                         )
+                    }
+
+                    // 拖动进度 / 亮度音量的中央指示：跟手势同层，不跟着控制条显隐
+                    seekPreview?.let { preview ->
+                        VideoGestureHint(modifier = Modifier.align(Alignment.Center)) {
+                            AppText(
+                                text = "${formatTime(preview.positionMs)} / " +
+                                    formatTime(preview.durationMs),
+                                color = Color.White,
+                            )
+                        }
+                    }
+                    mediaOverlay?.let { overlay ->
+                        VideoGestureHint(modifier = Modifier.align(Alignment.Center)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                AppIcon(
+                                    imageVector = if (overlay is VideoMediaOverlay.Brightness) {
+                                        Icons.Default.Brightness6
+                                    } else {
+                                        Icons.AutoMirrored.Filled.VolumeUp
+                                    },
+                                    contentDescription = null,
+                                    tint = Color.White,
+                                )
+                                AppText(
+                                    text = "${(overlay.fraction * 100).roundToInt()}%",
+                                    color = Color.White,
+                                    modifier = Modifier.padding(start = 8.dp),
+                                )
+                            }
+                        }
                     }
 
                     // 浮层：顶栏 + 中央播放键 + 进度条与操作行，跟随控制条显隐。
@@ -458,9 +684,17 @@ fun VideoPlayerScreen(
                             hasSource = state.hasSource,
                             hasSourceLogin = state.hasSourceLogin,
                             hasCustomButton = state.hasCustomButton,
+                            magnetSession = magnetUrl != null,
+                            keepMagnetService = state.keepMagnetService,
                             canPrevious = state.episodeIndex > 0 || state.volumeIndex > 0,
                             canNext = state.episodeIndex < state.episodes.lastIndex ||
                                 state.volumeIndex < state.volumes.lastIndex,
+                            seekStep = state.seekStep,
+                            progressSeekingEnabled = progressSeekingEnabled,
+                            progressGestureLocked = progressGestureLocked,
+                            onToggleProgressGestureLock = {
+                                progressGestureLocked = !progressGestureLocked
+                            },
                             onBack = exitPlayer,
                             onTogglePlay = {
                                 viewModel.onIntent(VideoPlayerIntent.TogglePlay)
@@ -516,6 +750,15 @@ fun VideoPlayerScreen(
                         .fillMaxWidth()
                         .weight(1f),
                     state = state,
+                    requestedBookUrl = bookUrl,
+                    fallbackCoverUrl = initialCoverPath,
+                    sharedCoverKey = sharedCoverKey,
+                    sharedTransitionScope = sharedTransitionScope,
+                    animatedVisibilityScope = animatedVisibilityScope,
+                    magnetState = magnetState,
+                    fallbackTitle = magnetTitle,
+                    onMagnetFileClick = viewModel::playMagnet,
+                    onMagnetRetry = viewModel::retryMagnet,
                     onIntent = viewModel::onIntent,
                 )
             }
@@ -547,6 +790,8 @@ fun VideoPlayerScreen(
         autoPlay = state.autoPlay,
         startFull = state.startFull,
         longPressSpeed = state.longPressSpeed,
+        seekStep = state.seekStep,
+        seekScreens = state.seekScreens,
         showDanmaku = state.showDanmaku,
         onAutoPlayChange = {
             viewModel.onIntent(VideoPlayerIntent.SetAutoPlay(it))
@@ -556,6 +801,12 @@ fun VideoPlayerScreen(
         },
         onLongPressSpeedChange = {
             viewModel.onIntent(VideoPlayerIntent.SetLongPressSpeed(it))
+        },
+        onSeekStepChange = {
+            viewModel.onIntent(VideoPlayerIntent.SetSeekStep(it))
+        },
+        onSeekScreensChange = {
+            viewModel.onIntent(VideoPlayerIntent.SetSeekScreens(it))
         },
         onDanmakuChange = { viewModel.onIntent(VideoPlayerIntent.ToggleDanmaku) },
         floatingEnabled = state.floatingEnabled,
@@ -610,6 +861,20 @@ private fun runSourceCustomButton(
     }
 }
 
+/** 磁力链接交给系统选择器，用户自己挑迅雷/其他磁力客户端。 */
+private fun openMagnetAppChooser(context: android.content.Context, url: String) {
+    runCatching {
+        val intent = Intent(Intent.ACTION_VIEW)
+            .setData(android.net.Uri.parse(url))
+        // NEW_TASK 落在真正 startActivity 的 chooser 上，Application context 调用才不会抛异常
+        val chooser = Intent.createChooser(intent, context.getString(R.string.open_fun))
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        context.startActivity(chooser)
+    }.onFailure {
+        context.toastOnUi(it.localizedMessage ?: context.getString(R.string.load_failed))
+    }
+}
+
 private fun openExternalPlayer(
     context: android.content.Context,
     url: String,
@@ -631,6 +896,9 @@ private fun openExternalPlayer(
 private fun VideoTopBar(
     /** 全屏时系统栏隐藏，浮层要自己避让状态栏；竖屏下播放器已经让开了。 */
     topInset: Boolean,
+    fullscreen: Boolean,
+    progressGestureLocked: Boolean,
+    onToggleProgressGestureLock: () -> Unit,
     onBack: () -> Unit,
     menuExpanded: Boolean,
     onMenuExpand: () -> Unit,
@@ -638,10 +906,12 @@ private fun VideoTopBar(
     hasSource: Boolean,
     hasSourceLogin: Boolean,
     hasCustomButton: Boolean,
+    magnetSession: Boolean,
+    keepMagnetService: Boolean,
     onPip: () -> Unit,
     onIntent: (VideoPlayerIntent) -> Unit,
 ) {
-    Row(
+    Column(
         modifier = Modifier
             .fillMaxWidth()
             // 横屏下挖孔落在左右两侧，返回键与菜单键必须让开，否则会压在挖孔上
@@ -664,10 +934,13 @@ private fun VideoTopBar(
                 }
             )
             .padding(top = 8.dp, start = 8.dp, end = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
     ) {
-        OverlayIconButton(icon = AppIcons.Back, contentDescription = null, onClick = onBack)
-        Spacer(Modifier.weight(1f))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            OverlayIconButton(icon = AppIcons.Back, contentDescription = null, onClick = onBack)
+            Spacer(Modifier.weight(1f))
         Box {
             OverlayIconButton(
                 icon = AppIcons.MoreVert,
@@ -678,6 +951,15 @@ private fun VideoTopBar(
                 expanded = menuExpanded,
                 onDismissRequest = onMenuDismiss,
             ) { dismiss ->
+                if (magnetSession) {
+                    RoundDropdownMenuItem(
+                        text = stringResource(R.string.video_download),
+                        onClick = {
+                            dismiss()
+                            onIntent(VideoPlayerIntent.DownloadVideo)
+                        },
+                    )
+                }
                 RoundDropdownMenuItem(
                     text = stringResource(R.string.copy_play_url),
                     onClick = {
@@ -720,6 +1002,23 @@ private fun VideoTopBar(
                         )
                     },
                 )
+                if (magnetSession) {
+                    RoundDropdownMenuItem(
+                        text = stringResource(R.string.magnet_player_copy),
+                        onClick = {
+                            dismiss()
+                            onIntent(VideoPlayerIntent.CopyMagnetLink)
+                        },
+                    )
+                    RoundDropdownMenuItem(
+                        text = stringResource(R.string.video_keep_magnet_service),
+                        isSelected = keepMagnetService,
+                        onClick = {
+                            dismiss()
+                            onIntent(VideoPlayerIntent.ToggleKeepMagnetService)
+                        },
+                    )
+                }
                 RoundDropdownMenuItem(
                     text = stringResource(R.string.config_settings),
                     onClick = {
@@ -761,6 +1060,34 @@ private fun VideoTopBar(
                         },
                     )
                 }
+            }
+        }
+        }
+        // 全屏才需要锁手势：放在返回键下方并留出间距，避免误触
+        if (fullscreen) {
+            Spacer(Modifier.height(12.dp))
+            AppIconButton(
+                onClick = onToggleProgressGestureLock,
+                modifier = Modifier.size(40.dp),
+            ) {
+                AppIcon(
+                    painter = painterResource(
+                        if (progressGestureLocked) {
+                            R.drawable.ic_video_lock
+                        } else {
+                            R.drawable.ic_video_unlock
+                        }
+                    ),
+                    contentDescription = stringResource(
+                        if (progressGestureLocked) {
+                            R.string.video_gesture_unlock
+                        } else {
+                            R.string.video_gesture_lock
+                        }
+                    ),
+                    tint = Color.White,
+                    modifier = Modifier.size(20.dp),
+                )
             }
         }
     }
@@ -824,6 +1151,15 @@ private fun PlayerResizeHandle(
 private fun VideoBottomPanel(
     modifier: Modifier,
     state: VideoPlayerUiState,
+    requestedBookUrl: String?,
+    fallbackCoverUrl: String? = null,
+    sharedCoverKey: String? = null,
+    sharedTransitionScope: SharedTransitionScope? = null,
+    animatedVisibilityScope: AnimatedVisibilityScope? = null,
+    magnetState: MagnetPanelState? = null,
+    fallbackTitle: String? = null,
+    onMagnetFileClick: (Int) -> Unit = {},
+    onMagnetRetry: () -> Unit = {},
     onIntent: (VideoPlayerIntent) -> Unit,
 ) {
     Column(
@@ -833,8 +1169,24 @@ private fun VideoBottomPanel(
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
+        // 磁力文件条：在播放画面下方、封面标题上方，一行横向滑动
+        magnetState?.let {
+            MagnetFileRow(
+                state = it,
+                onFileClick = onMagnetFileClick,
+                onRetry = onMagnetRetry,
+            )
+        }
         Column(modifier = Modifier.fillMaxWidth()) {
-            BookHeader(state)
+            BookHeader(
+                state = state,
+                requestedBookUrl = requestedBookUrl,
+                fallbackCoverUrl = fallbackCoverUrl,
+                fallbackTitle = fallbackTitle,
+                sharedCoverKey = sharedCoverKey,
+                sharedTransitionScope = sharedTransitionScope,
+                animatedVisibilityScope = animatedVisibilityScope,
+            )
             Spacer(Modifier.height(16.dp))
             AppText(
                 text = stringResource(R.string.book_intro),
@@ -859,42 +1211,169 @@ private fun VideoBottomPanel(
     }
 }
 
-/** 封面 + 书名 + 作者/书源 + 当前章节，与封面垂直居中。 */
+/** 磁力文件条：与详情页标签一致，一行横向滑动，按体积从大到小。 */
 @Composable
-private fun BookHeader(state: VideoPlayerUiState) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        if (state.coverUrl.isNotBlank()) {
+private fun MagnetFileRow(
+    state: MagnetPanelState,
+    onFileClick: (Int) -> Unit,
+    onRetry: () -> Unit,
+) {
+    when {
+        state.loading -> AppText(
+            text = stringResource(R.string.magnet_player_resolving),
+            style = LegadoTheme.typography.bodyMedium,
+            color = LegadoTheme.colorScheme.onSurfaceVariant,
+        )
+
+        state.files.isEmpty() && state.error != null -> Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            AppText(
+                text = state.error.orEmpty(),
+                modifier = Modifier.weight(1f),
+                style = LegadoTheme.typography.bodyMedium,
+                color = LegadoTheme.colorScheme.error,
+            )
+            TextCard(
+                text = stringResource(R.string.magnet_player_retry),
+                textStyle = LegadoTheme.typography.labelLargeEmphasized,
+                onClick = onRetry,
+            )
+        }
+
+        else -> LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(state.files, key = { it.index }) { file ->
+                val preparing = state.preparingIndex == file.index
+                val playing = state.playingIndex == file.index
+                if (preparing) {
+                    NormalCard(
+                        onClick = { onFileClick(file.index) },
+                        cornerRadius = 8.dp,
+                        containerColor = LegadoTheme.colorScheme.surfaceContainer,
+                        contentColor = LegadoTheme.colorScheme.onSurfaceVariant,
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            AppCircularProgressIndicator(
+                                modifier = Modifier.size(14.dp),
+                                strokeWidth = 2.dp,
+                            )
+                            AppText(
+                                text = "${file.name}  ${file.size}",
+                                style = LegadoTheme.typography.labelLargeEmphasized,
+                            )
+                        }
+                    }
+                } else {
+                    TextCard(
+                        text = "${file.name}  ${file.size}",
+                        textStyle = LegadoTheme.typography.labelLargeEmphasized,
+                        backgroundColor = if (playing) {
+                            LegadoTheme.colorScheme.primaryContainer
+                        } else {
+                            LegadoTheme.colorScheme.surfaceContainer
+                        },
+                        contentColor = if (playing) {
+                            LegadoTheme.colorScheme.onPrimaryContainer
+                        } else {
+                            LegadoTheme.colorScheme.onSurfaceVariant
+                        },
+                        onClick = { onFileClick(file.index) },
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** 封面居中，书名/作者/书源/当前章节另起一行，与详情页布局一致。 */
+@Composable
+private fun BookHeader(
+    state: VideoPlayerUiState,
+    requestedBookUrl: String?,
+    fallbackCoverUrl: String? = null,
+    fallbackTitle: String? = null,
+    sharedCoverKey: String? = null,
+    sharedTransitionScope: SharedTransitionScope? = null,
+    animatedVisibilityScope: AnimatedVisibilityScope? = null,
+) {
+    // 与详情页一致：宽度取屏宽减去左右边距，高度按封面真实比例。
+    // 不按固定 5:7 给高度的话，Fit 会在上下留出大片空白。
+    val coverWidth = (LocalConfiguration.current.screenWidthDp - 32f).coerceAtMost(360f)
+    // 会话数据还没回来时先用详情页带过来的封面，避免首帧闪默认封面
+    val effectiveCover = resolveVideoCoverUrl(
+        requestedBookUrl = requestedBookUrl,
+        sessionBookUrl = state.bookUrl,
+        sessionCoverUrl = state.coverUrl,
+        fallbackCoverUrl = fallbackCoverUrl,
+    )
+    // 进播放页时固定布局比例；图片加载回调只更新缓存，不再改当前屏幕高度。
+    val coverRatio = remember {
+        videoPlayerInitialCoverAspectRatio(cachedCoverAspectRatio(effectiveCover))
+    }
+    // 封面地址被详情数据替换时，先把旧图当作占位，等新图加载完再切，避免闪一下空白
+    var lastCoverUrl by remember { mutableStateOf<String?>(null) }
+    var retainedCover by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(effectiveCover) {
+        val previous = lastCoverUrl
+        if (previous != null && effectiveCover.isNotBlank() && previous != effectiveCover) {
+            retainedCover = previous
+        }
+        lastCoverUrl = effectiveCover
+    }
+    val safeRatio = coverRatio
+    val coverHeight by animateDpAsState(
+        targetValue = (coverWidth / safeRatio).dp,
+        animationSpec = tween(350, easing = FastOutSlowInEasing),
+        label = "videoCoverHeight",
+    )
+    Column(modifier = Modifier.fillMaxWidth()) {
+        if (effectiveCover.isNotBlank()) {
             CoilBookCover(
                 name = state.bookName,
                 author = state.author,
-                path = state.coverUrl,
+                path = effectiveCover,
                 bookUrl = state.bookUrl,
-                modifier = Modifier.width(88.dp),
+                placeholderCoverPath = retainedCover,
+                onLoadFinish = { retainedCover = null },
+                sharedTransitionScope = sharedTransitionScope,
+                animatedVisibilityScope = animatedVisibilityScope,
+                sharedCoverKey = sharedCoverKey,
+                contentScale = ContentScale.Fit,
+                modifier = Modifier
+                    .width(coverWidth.dp)
+                    .height(coverHeight)
+                    .align(Alignment.CenterHorizontally),
             )
-            Spacer(Modifier.width(14.dp))
+            Spacer(Modifier.height(12.dp))
         }
-        Column(modifier = Modifier.weight(1f)) {
+        AppText(
+            text = state.bookName.ifBlank {
+                fallbackTitle ?: stringResource(R.string.play_video)
+            },
+            style = LegadoTheme.typography.titleLargeEmphasized,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
+        // 作者 / 书源只给值，不加「作者 ·」这类前缀；集数交给下面的选集区，不在这里重复
+        buildList {
+            if (state.author.isNotBlank()) add(state.author)
+            if (state.bookSourceName.isNotBlank()) add(state.bookSourceName)
+            if (state.chapterTitle.isNotBlank()) add(state.chapterTitle)
+        }.forEach { line ->
+            Spacer(Modifier.height(4.dp))
             AppText(
-                text = state.bookName.ifBlank { stringResource(R.string.play_video) },
-                style = LegadoTheme.typography.titleLargeEmphasized,
-                maxLines = 2,
+                text = line,
+                style = LegadoTheme.typography.bodySmall,
+                color = LegadoTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            // 作者 / 书源只给值，不加「作者 ·」这类前缀；集数交给下面的选集区，不在这里重复
-            buildList {
-                if (state.author.isNotBlank()) add(state.author)
-                if (state.bookSourceName.isNotBlank()) add(state.bookSourceName)
-                if (state.chapterTitle.isNotBlank()) add(state.chapterTitle)
-            }.forEach { line ->
-                Spacer(Modifier.height(4.dp))
-                AppText(
-                    text = line,
-                    style = LegadoTheme.typography.bodySmall,
-                    color = LegadoTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
         }
     }
 }
@@ -1048,8 +1527,14 @@ private fun VideoPlayerOverlay(
     hasSource: Boolean,
     hasSourceLogin: Boolean,
     hasCustomButton: Boolean,
+    magnetSession: Boolean,
+    keepMagnetService: Boolean,
     canPrevious: Boolean,
     canNext: Boolean,
+    seekStep: Int,
+    progressSeekingEnabled: Boolean,
+    progressGestureLocked: Boolean,
+    onToggleProgressGestureLock: () -> Unit,
     onBack: () -> Unit,
     onTogglePlay: () -> Unit,
     onSeek: (Long) -> Unit,
@@ -1074,6 +1559,9 @@ private fun VideoPlayerOverlay(
             )
             VideoTopBar(
                 topInset = topInset,
+                fullscreen = fullscreen,
+                progressGestureLocked = progressGestureLocked,
+                onToggleProgressGestureLock = onToggleProgressGestureLock,
                 onBack = onBack,
                 menuExpanded = menuExpanded,
                 onMenuExpand = onMenuExpand,
@@ -1081,6 +1569,8 @@ private fun VideoPlayerOverlay(
                 hasSource = hasSource,
                 hasSourceLogin = hasSourceLogin,
                 hasCustomButton = hasCustomButton,
+                magnetSession = magnetSession,
+                keepMagnetService = keepMagnetService,
                 onPip = onPip,
                 onIntent = onIntent,
             )
@@ -1115,7 +1605,11 @@ private fun VideoPlayerOverlay(
                 )
                 .padding(horizontal = 12.dp, vertical = 4.dp),
         ) {
-            ProgressBarRow(progress = progress, onSeek = onSeek)
+            ProgressBarRow(
+                progress = progress,
+                onSeek = onSeek,
+                seekingEnabled = progressSeekingEnabled,
+            )
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
@@ -1143,6 +1637,18 @@ private fun VideoPlayerOverlay(
                     enabled = canNext,
                 ) {
                     onIntent(VideoPlayerIntent.NextEpisode)
+                }
+                OverlayIconButton(
+                    icon = AppIcons.Rewind,
+                    contentDescription = stringResource(R.string.video_rewind),
+                ) {
+                    onIntent(VideoPlayerIntent.SeekBy(-seekStep))
+                }
+                OverlayIconButton(
+                    icon = AppIcons.FastForward,
+                    contentDescription = stringResource(R.string.video_fast_forward),
+                ) {
+                    onIntent(VideoPlayerIntent.SeekBy(seekStep))
                 }
                 Spacer(Modifier.weight(1f))
                 OverlayIconButton(
@@ -1172,6 +1678,7 @@ private fun VideoPlayerOverlay(
 private fun ProgressBarRow(
     progress: State<VideoPlaybackProgress>,
     onSeek: (Long) -> Unit,
+    seekingEnabled: Boolean = true,
 ) {
     val value = progress.value
     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1190,6 +1697,7 @@ private fun ProgressBarRow(
                 .padding(horizontal = 10.dp),
             activeColor = Color.White,
             inactiveColor = Color.White.copy(alpha = 0.38f),
+            enabled = seekingEnabled,
         )
         AppText(
             text = formatTime(value.durationMs),
@@ -1405,11 +1913,15 @@ private fun VideoSettingsSheet(
     autoPlay: Boolean,
     startFull: Boolean,
     longPressSpeed: Int,
+    seekStep: Int,
+    seekScreens: Float,
     showDanmaku: Boolean,
     floatingEnabled: Boolean,
     onAutoPlayChange: (Boolean) -> Unit,
     onStartFullChange: (Boolean) -> Unit,
     onLongPressSpeedChange: (Int) -> Unit,
+    onSeekStepChange: (Int) -> Unit,
+    onSeekScreensChange: (Float) -> Unit,
     onDanmakuChange: (Boolean) -> Unit,
     onFloatingChange: (Boolean) -> Unit,
     onDismiss: () -> Unit,
@@ -1418,12 +1930,26 @@ private fun VideoSettingsSheet(
     var longPressDraft by remember(longPressSpeed) {
         mutableFloatStateOf(longPressSpeed / 10f)
     }
+    var seekStepDraft by remember(seekStep) {
+        mutableFloatStateOf(seekStep.toFloat())
+    }
+    var seekScreensDraft by remember(seekScreens) {
+        mutableFloatStateOf(seekScreens)
+    }
     AppModalBottomSheet(
         show = show,
         onDismissRequest = onDismiss,
         title = stringResource(R.string.config_settings),
     ) {
-        Column(modifier = Modifier.fillMaxWidth()) {
+        // 横屏可用高度很矮，设置项（尤其展开后的滑块）会超出屏幕，
+        // 内容必须能滚动，否则下面的项点不到
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .navigationBarsPadding()
+                .padding(bottom = 16.dp),
+        ) {
             TinySwitchSettingItem(
                 title = stringResource(R.string.video_auto_play),
                 checked = autoPlay,
@@ -1458,12 +1984,106 @@ private fun VideoSettingsSheet(
                     onLongPressSpeedChange((longPressDraft * 10f).roundToInt())
                 },
             )
+            TinySliderSettingItem(
+                title = stringResource(R.string.video_seek_step, seekStep),
+                value = seekStep.toFloat(),
+                valueRange = 5f..30f,
+                stepSize = 5f,
+                steps = 4,
+                valueFormat = { "${it.roundToInt()}s" },
+                onValueChange = { seekStepDraft = it },
+                onValueChangeFinished = { onSeekStepChange(seekStepDraft.roundToInt()) },
+            )
+            TinySliderSettingItem(
+                title = stringResource(R.string.video_seek_sensitivity),
+                value = seekScreens,
+                valueRange = 1f..12f,
+                stepSize = 1f,
+                steps = 10,
+                valueFormat = { "${it.roundToInt()}" },
+                onValueChange = { seekScreensDraft = it },
+                onValueChangeFinished = { onSeekScreensChange(seekScreensDraft) },
+            )
         }
     }
 }
 
-/** 倍速文案：整数倍不带小数位（1x），其余照实（1.25x）。 */
-private fun formatSpeed(speed: Float): String =
+/** 手势过程的中央提示：半透明黑底 + 白色内容。 */
+@Composable
+private fun VideoGestureHint(
+    modifier: Modifier = Modifier,
+    content: @Composable BoxScope.() -> Unit,
+) {
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(8.dp))
+            .background(Color.Black.copy(alpha = 0.75f))
+            .padding(horizontal = 24.dp, vertical = 16.dp),
+        content = content,
+    )
+}
+
+/**
+ * 横向拖动调进度：三屏宽约等于整段时长，跟手更新中央预览，抬手才真正 seek。
+ * 片源还没解析出时长时不做处理，避免拖了没反应。
+ */
+private suspend fun AwaitPointerEventScope.dragToSeek(
+    down: PointerInputChange,
+    firstMove: PointerInputChange,
+    seekScreens: Float,
+    onPreview: (VideoSeekPreview?) -> Unit,
+    onSeek: (Long) -> Unit,
+) {
+    val player = VideoPlay.player
+    val duration = runCatching { player.duration }.getOrDefault(0L)
+    if (duration <= 0L) return
+    val startPosition = runCatching { player.currentPosition }.getOrDefault(0L)
+        .coerceIn(0L, duration)
+    val screens = seekScreens.takeIf { it > 0f } ?: DEFAULT_SEEK_SCREENS_PER_DURATION
+    var change = firstMove
+    var target = startPosition
+    while (true) {
+        val offset = ((change.position.x - down.position.x) /
+            (size.width.toFloat() * screens) * duration).toLong()
+        target = (startPosition + offset).coerceIn(0L, duration)
+        onPreview(VideoSeekPreview(target, duration))
+        change.consume()
+        if (!change.pressed) break
+        change = awaitPointerEvent().changes.firstOrNull { it.id == down.id } ?: break
+    }
+    onPreview(null)
+    onSeek(target)
+}
+
+/**
+ * 纵向拖动调亮度（左半屏）或音量（右半屏）：整屏高度对应满量程。
+ * 回调给出绝对目标值，落地由调用方负责。
+ */
+private suspend fun AwaitPointerEventScope.dragToBrightnessOrVolume(
+    down: PointerInputChange,
+    firstMove: PointerInputChange,
+    leftSide: Boolean,
+    startBrightness: Float,
+    startVolume: Int,
+    maxVolume: Int,
+    onFraction: (Float) -> Unit,
+) {
+    var change = firstMove
+    while (true) {
+        val delta = (down.position.y - change.position.y) / size.height.toFloat()
+        val fraction = if (leftSide) {
+            (startBrightness + delta).coerceIn(0.01f, 1f)
+        } else {
+            ((startVolume + delta * maxVolume) / maxVolume).coerceIn(0f, 1f)
+        }
+        onFraction(fraction)
+        change.consume()
+        if (!change.pressed) break
+        change = awaitPointerEvent().changes.firstOrNull { it.id == down.id } ?: break
+    }
+}
+
+/** 倍速文案：整数倍不带小数位（1x），其余照实（1.25x）。 */private fun formatSpeed(speed: Float): String =
     if (speed % 1f == 0f) "${speed.toInt()}x" else "${speed}x"
 
 /** 把任意倍速落到最接近的预设档位上，滑块的初始位置用它。 */

@@ -1,6 +1,9 @@
 package io.legado.app.service
 
 import android.content.Intent
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.core.app.NotificationCompat
 import androidx.media.app.NotificationCompat.MediaStyle
 import androidx.media3.common.Player
@@ -70,6 +73,7 @@ class VideoPlayService : BaseService() {
                     } else {
                         floatingWindow?.close()
                     }
+                    isFloatingVisible = floatingWindow?.isShowing == true
                 }
         }
     }
@@ -90,7 +94,10 @@ class VideoPlayService : BaseService() {
                 )
 
                 IntentAction.stop -> stopSelf()
-                IntentAction.toggleVideoFloating -> floatingWindow?.toggle()
+                IntentAction.toggleVideoFloating -> {
+                    floatingWindow?.toggle()
+                    isFloatingVisible = floatingWindow?.isShowing == true
+                }
             }
         }
         return super.onStartCommand(intent, flags, startId)
@@ -224,6 +231,7 @@ class VideoPlayService : BaseService() {
         serviceScope.coroutineContext.cancel()
         floatingWindow?.close()
         floatingWindow = null
+        isFloatingVisible = false
         runCatching { VideoPlay.player.removeListener(playerListener) }
         VideoPlay.stop()
         VideoPlay.release()
@@ -231,5 +239,14 @@ class VideoPlayService : BaseService() {
         mediaSessionCompat = null
         notificationManager.cancel(NotificationId.VideoPlayService)
         super.onDestroy()
+    }
+
+    companion object {
+        /**
+         * 悬浮小窗是否正在显示。播放页据此解绑自己的 PlayerView，
+         * 两个 PlayerView 抢同一个 ExoPlayer 会让页面画面卡住。
+         */
+        var isFloatingVisible by mutableStateOf(false)
+            internal set
     }
 }

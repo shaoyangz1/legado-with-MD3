@@ -274,7 +274,8 @@
     <string name="can_not_share">Share failed</string>
     <string name="no_chapter">No chapters</string>
     <string name="add_url">Add URL</string>
-    <string name="add_book_url">Add book URL</string>
+    <string name="add_book_url">Add book URL or magnet</string>
+    <string name="add_book_url_hint">Enter URL, JSON or magnet link</string>
     <string name="background">Background</string>
     <string name="author">Author</string>
     <string name="author_show">%s</string>
@@ -298,6 +299,8 @@
     <string name="scan_image">Scan local images</string>
     <string name="rule_summary">Rules description</string>
     <string name="share">Share</string>
+    <string name="share_web_link">Share web link</string>
+    <string name="share_book_info">Share book information</string>
     <string name="share_app">Share to</string>
     <string name="flow_sys">System</string>
     <string name="add">Add</string>
@@ -776,6 +779,12 @@
     <string name="music">Music</string>
     <string name="audio">Audio</string>
     <string name="video">Video</string>
+    <string name="video_gesture_lock">Lock gestures</string>
+    <string name="video_gesture_unlock">Unlock gestures</string>
+    <string name="video_seek_step">Seek step %1$d seconds</string>
+    <string name="video_seek_sensitivity">Swipe seek sensitivity</string>
+    <string name="video_rewind">Rewind</string>
+    <string name="video_fast_forward">Fast forward</string>
     <string name="open_other_video_player">Open in other player</string>
     <string name="select_episode">Episodes</string>
     <string name="config_settings">Settings</string>
@@ -3986,10 +3995,9 @@
     <string name="page_anim_ios_curl">iOS Curl</string>
     <string name="page_anim_google_curl">Google Curl</string>
     <string name="page_anim_parallax">Parallax</string>
-    <string name="bookmark_target_content_mismatch">The content has changed or its original location can no longer be verified, redirect anyway?</string>
-    <string name="search_content_changed">The content or processing settings changed. Please search again.</string>
-    <string name="a11y_close_read_menu">Close reading menu</string>
-    <string name="a11y_open_playback">Open player</string>
-    <string name="a11y_open_playback_named">Open player for %1$s</string>
-    <string name="a11y_reorder_position">Position %1$d of %2$d</string>
+    <string name="magnet_player_resolving">Resolving magnet…</string>
+    <string name="magnet_player_retry">Retry</string>
+    <string name="magnet_player_copy">Copy magnet link</string>
+    <string name="video_keep_magnet_service">Keep magnet service in background</string>
+    <string name="video_download">Download video</string>
 </resources>

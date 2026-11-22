@@ -187,7 +187,8 @@
     <string name="can_not_share">分享失敗</string>
     <string name="no_chapter">無章節</string>
     <string name="add_url">添加網址</string>
-    <string name="add_book_url">添加書輯網址</string>
+    <string name="add_book_url">添加書籍網址或磁力</string>
+    <string name="add_book_url_hint">請輸入 URL、JSON 或磁力連結</string>
     <string name="background">背景</string>
     <string name="author">作者</string>
     <string name="author_show">%s</string>
@@ -211,6 +212,8 @@
     <string name="scan_image">掃描本地圖片</string>
     <string name="rule_summary">規則説明</string>
     <string name="share">分享</string>
+    <string name="share_web_link">分享網頁連結</string>
+    <string name="share_book_info">分享書籍資訊</string>
     <string name="share_app">應用程式分享</string>
     <string name="flow_sys">跟隨系統</string>
     <string name="add">添加</string>
@@ -668,6 +671,12 @@
     <string name="music">音樂</string>
     <string name="audio">音頻</string>
     <string name="video">影片</string>
+    <string name="video_gesture_lock">鎖定手勢</string>
+    <string name="video_gesture_unlock">解鎖手勢</string>
+    <string name="video_seek_step">跳轉時長 %1$d 秒</string>
+    <string name="video_seek_sensitivity">滑動調進度靈敏度</string>
+    <string name="video_rewind">倒退</string>
+    <string name="video_fast_forward">快進</string>
     <string name="open_other_video_player">用其他播放器打開</string>
     <string name="select_episode">選集</string>
     <string name="config_settings">播放設定</string>
@@ -3093,10 +3102,9 @@
     <string name="page_anim_ios_curl">iOS仿真</string>
     <string name="page_anim_google_curl">Google仿真</string>
     <string name="page_anim_parallax">視差</string>
-    <string name="bookmark_target_content_mismatch">正文已變動或無法驗證原位置，仍要跳轉嗎？</string>
-    <string name="search_content_changed">正文或處理設定已變更，請重新搜尋。</string>
-    <string name="a11y_close_read_menu">關閉閱讀選單</string>
-    <string name="a11y_open_playback">開啟播放介面</string>
-    <string name="a11y_open_playback_named">開啟《%1$s》的播放介面</string>
-    <string name="a11y_reorder_position">第 %1$d 項，共 %2$d 項</string>
+    <string name="magnet_player_resolving">正在解析磁力…</string>
+    <string name="magnet_player_retry">重試</string>
+    <string name="magnet_player_copy">複製磁力</string>
+    <string name="video_keep_magnet_service">保持磁力後台服務</string>
+    <string name="video_download">下載影片</string>
 </resources>

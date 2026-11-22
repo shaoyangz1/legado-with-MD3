@@ -85,9 +85,10 @@ class ExploreShowViewModel(
 
     /**
      * 非空表示当前地址是标签/分类跳转传入的运行时地址，用该参数名兜底翻页；
-     * 普通发现入口不启用兜底；书源规则地址始终原样交给 AnalyzeUrl。
+     * 书源显式配置 pageParam 时普通发现入口也按该参数翻页；其余情况原样交给 AnalyzeUrl。
      */
     private var pageParamName: String? = null
+    private var pageParamResolved = false
     private var initialized = false
     private var loadJob: kotlinx.coroutines.Job? = null
     private var loadGeneration = 0L
@@ -147,7 +148,7 @@ class ExploreShowViewModel(
             )
             ExploreShowIntent.LoadMore -> loadMore()
             is ExploreShowIntent.JumpToPage -> jumpToPage(intent.page)
-            ExploreShowIntent.ForceLoadNext -> loadMore(forceLoad = true)
+            ExploreShowIntent.ForceLoadNext -> loadMore()
             ExploreShowIntent.Refresh -> loadMore(isRefresh = true)
             is ExploreShowIntent.SwitchKind -> switchKind(intent.kind)
             ExploreShowIntent.ToggleLayout -> toggleLayout()
@@ -306,10 +307,12 @@ class ExploreShowViewModel(
         initialUsePageParamFallback = incomingUsePageParamFallback
         exploreUrl = incomingExploreUrl
         pageParamName = null
+        pageParamResolved = false
         usePageParamFallback = incomingUsePageParamFallback && incomingExploreUrl.supportsParamPagination()
         _pageState.value = ExplorePageState(
             currentPage = 1,
-            canJumpPage = usePageParamFallback || AnalyzeUrl.supportsPageSelection(incomingExploreUrl),
+            canJumpPage = usePageParamFallback ||
+                supportsJumpPage(bookSourceRepository, incomingSourceUrl, incomingExploreUrl),
         )
         page = 1
         autoPageCount = 0
@@ -344,9 +347,10 @@ class ExploreShowViewModel(
         // kind.url 是书源规则地址，页码由规则语法处理，参数兜底不适用
         usePageParamFallback = false
         pageParamName = null
+        pageParamResolved = false
         _pageState.value = ExplorePageState(
             currentPage = 1,
-            canJumpPage = AnalyzeUrl.supportsPageSelection(kind.url),
+            canJumpPage = supportsJumpPage(bookSourceRepository, sourceUrl, kind.url),
         )
         _loadState.value = ExploreShowLoadState()
         autoPageCount = 0
@@ -416,18 +420,20 @@ class ExploreShowViewModel(
         loadJob = viewModelScope.launch { fetchPage(source, url, generation) }
     }
 
-    private fun loadMore(isRefresh: Boolean = false, forceLoad: Boolean = false) {
+    private fun loadMore(isRefresh: Boolean = false) {
         val source = sourceUrl
         val url = exploreUrl
         val loadState = _loadState.value
-        if (source == null || loadState.isLoading || (loadState.isEnd && !isRefresh && !forceLoad)) return
+        // 过滤后当前页为空时界面会继续请求下一页；这类请求不能突破 isEnd，
+        // 否则空页会反复触发加载、isEnd 又被重置，形成一直翻页的循环。
+        if (source == null || loadState.isLoading || (loadState.isEnd && !isRefresh)) return
         val generation = ++loadGeneration
 
         _loadState.update {
             it.copy(
                 isLoading = true,
                 isRefreshing = isRefresh,
-                isEnd = if (isRefresh || forceLoad) false else it.isEnd,
+                isEnd = if (isRefresh) false else it.isEnd,
                 errorMsg = null,
             )
         }
@@ -439,10 +445,6 @@ class ExploreShowViewModel(
                 _rawBooks.value = emptyList()
             }
 
-            if (forceLoad) {
-                autoPageCount = 0
-            }
-
             fetchPage(source, url, generation)
         }
     }
@@ -450,11 +452,12 @@ class ExploreShowViewModel(
     private suspend fun fetchPage(sourceUrl: String, url: String?, generation: Long) {
         kotlin.runCatching {
             // 在同一加载任务内解析一次，避免异步配置结果覆盖切换后的分类。
-            if (usePageParamFallback && pageParamName == null) {
-                val param = bookSourceRepository.getBookSource(sourceUrl)
-                    ?.getExploreRule()?.pageParam?.takeIf { it.isNotBlank() } ?: "page"
+            if (!pageParamResolved) {
+                val configured = bookSourceRepository.getBookSource(sourceUrl)
+                    ?.getExploreRule()?.pageParam?.takeIf { it.isNotBlank() }
                 if (generation != loadGeneration) return
-                pageParamName = param
+                pageParamName = configured ?: if (usePageParamFallback) "page" else null
+                pageParamResolved = true
             }
             val pageParam = pageParamName
             exploreBooksUseCase.execute(
@@ -466,10 +469,9 @@ class ExploreShowViewModel(
         }.onSuccess { result ->
             if (generation != loadGeneration) return@onSuccess
             val currentList = _rawBooks.value
-            val existingUrls = currentList.map { it.bookUrl }.toSet()
             val uniqueNewBooks = result.books
-                .filter { it.bookUrl !in existingUrls }
-                .distinctBy { it.bookUrl }
+                .excludingListPage(url)
+                .newBooksNotIn(currentList)
 
             if (result.books.isNotEmpty()) {
                 saveSearchBooksUseCase.save(result.books)
@@ -523,6 +525,31 @@ class ExploreShowViewModel(
 }
 
 /**
+ * 跳过已加载过的书：URL 相同，或书名+作者相同。
+ * 服务端翻页时常换 URL 复用同一批作品，只按 URL 去重会让列表出现重复条目、永远翻不到底。
+ */
+internal fun List<SearchBook>.newBooksNotIn(existing: List<SearchBook>): List<SearchBook> {
+    val existingUrls = existing.mapTo(HashSet()) { it.bookUrl }
+    val existingKeys = existing.mapTo(HashSet()) { it.name to it.author }
+    return filter { it.bookUrl !in existingUrls }
+        .filter { (it.name to it.author) !in existingKeys }
+        .distinctBy { it.bookUrl }
+}
+
+/**
+ * 过滤掉「列表页自身」被当成书的情况：书源里某个条目取不到详情链接时，
+ * legado 会把 bookUrl 回退成 baseUrl（当前列表页地址），翻页后就成了 ?page=N 的假书。
+ */
+internal fun List<SearchBook>.excludingListPage(listUrl: String?): List<SearchBook> {
+    val listPath = listUrl?.substringBefore('?')?.substringBefore('#')?.trimEnd('/')
+    if (listPath.isNullOrBlank()) return this
+    return filter {
+        it.bookUrl.substringBefore('?').substringBefore('#').trimEnd('/') != listPath
+    }
+}
+
+
+/**
  * 运行时地址的参数兜底翻页：替换已有的同名查询参数，否则追加 `param=page`，fragment 保持原位。
  * 只对不带页码规则的运行时地址生效，见 [supportsParamPagination]；第一页按原地址请求，
  * 不改变书源直入时的首次请求。
@@ -532,6 +559,32 @@ internal fun String?.withPageParam(page: Int, param: String): String? {
     val hashIndex = indexOf('#')
     val base = if (hashIndex >= 0) substring(0, hashIndex) else this
     val fragment = if (hashIndex >= 0) substring(hashIndex) else ""
+    // 路径/后缀式分页模板："/page/{page}/"、"-{page}/" 等
+    val tokenIndex = param.indexOf("{page}")
+    if (tokenIndex > 0) {
+        val prefix = param.substring(0, tokenIndex)
+        val suffix = param.substring(tokenIndex + "{page}".length)
+        // 标签地址本身就带页码（如 /t/87/page/2/、/t/87-2/、/type/xx/1/）：替换已有页码，不能追加。
+        // 裸 "/{page}" 无前后缀可分，末尾数字实际可能是 ID（JavBus 的 /star/155t、/studio/1），一律追加。
+        val existing = if (prefix == "/" && suffix.isEmpty()) {
+            null
+        } else {
+            Regex(Regex.escape(prefix) + "\\d+")
+                .findAll(base)
+                .lastOrNull { match ->
+                    val tail = base.substring(match.range.last + 1)
+                    suffix.isEmpty() || tail.startsWith(suffix)
+                }
+        }
+        if (existing != null) {
+            val tail = base.substring(existing.range.last + 1)
+            return base.substring(0, existing.range.first) + prefix + page + tail + fragment
+        }
+        // 整段 query 模板（如 Jable 的 "?mode=async&...&from={page}"）要保持原地址的尾斜杠，
+        // 去掉后 /categories/xxx?mode= 会变成 /categories/xxx?mode=，服务端拿不到列表。
+        val appendBase = if (param.startsWith("?")) base else base.trimEnd('/')
+        return appendBase + param.replace("{page}", page.toString()) + fragment
+    }
     val pattern = Regex("([?&])${Regex.escape(param)}=\\d+")
     val withPage = if (pattern.containsMatchIn(base)) {
         pattern.replace(base) { "${it.groupValues[1]}$param=$page" }
@@ -539,6 +592,17 @@ internal fun String?.withPageParam(page: Int, param: String): String? {
         base + (if (base.contains('?')) "&" else "?") + "$param=$page"
     }
     return withPage + fragment
+}
+
+/** URL 自带分页模板，或书源配置了 pageParam（运行时会追加页码）时都允许跳页。 */
+private fun supportsJumpPage(
+    repository: BookSourceRepository,
+    sourceUrl: String?,
+    url: String?,
+): Boolean {
+    if (AnalyzeUrl.supportsPageSelection(url)) return true
+    val src = sourceUrl ?: return false
+    return !repository.getBookSourceSync(src)?.getExploreRule()?.pageParam.isNullOrBlank()
 }
 
 /**

@@ -28,6 +28,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.graphics.Color
@@ -51,9 +52,9 @@ import io.legado.app.ui.widget.components.text.AppText
 import io.legado.app.utils.HtmlFormatter
 
 private const val DEFAULT_SEARCH_BOOK_COVER_ASPECT_RATIO = 5f / 7f
-private const val SEARCH_BOOK_COVER_WIDTH_DP = 72f
-private const val MIN_SEARCH_BOOK_COVER_HEIGHT_DP = 80f
-private const val MAX_SEARCH_BOOK_COVER_HEIGHT_DP = 140f
+private const val SEARCH_BOOK_COVER_WIDTH_DP = 120f
+private const val MIN_SEARCH_BOOK_COVER_HEIGHT_DP = 1f
+private const val MAX_SEARCH_BOOK_COVER_HEIGHT_DP = 233f
 
 internal fun searchBookCoverHeightDp(aspectRatio: Float): Float {
     val safeAspectRatio =
@@ -125,6 +126,7 @@ fun SearchBookListItem(
                     .fillMaxSize()
                     .then(if (qualityMasked) Modifier.blur(8.dp) else Modifier),
                 sourceOrigin = book.origin,
+                contentScale = if (allowCoverRatioAdapt) ContentScale.Fit else ContentScale.Crop,
                 sharedTransitionScope = sharedTransitionScope,
                 animatedVisibilityScope = animatedVisibilityScope,
                 sharedCoverKey = sharedCoverKey,
@@ -274,18 +276,10 @@ fun SearchBookGridItem(
     qualityMasked: Boolean = false,
     adaptCoverAspectRatio: Boolean = false,
 ) {
-    // 语义与 SearchBookListItem 一致；网格列宽随屏宽变化，不套用列表的
-    // 80~140dp 高度 clamp，瀑布流里条目宽高比直接取原图比例
     val allowCoverRatioAdapt = adaptCoverAspectRatio &&
         !LocalAppUiConfiguration.current.cover.restrictCoverRatio
-    val coverAspectRatioState = remember(allowCoverRatioAdapt, book.coverUrl) {
-        mutableFloatStateOf(
-            if (allowCoverRatioAdapt) {
-                cachedCoverAspectRatio(book.coverUrl) ?: DEFAULT_SEARCH_BOOK_COVER_ASPECT_RATIO
-            } else {
-                DEFAULT_SEARCH_BOOK_COVER_ASPECT_RATIO
-            }
-        )
+    val coverAspectRatioState = remember(book.coverUrl) {
+        mutableFloatStateOf(DEFAULT_SEARCH_BOOK_COVER_ASPECT_RATIO)
     }
     Column(
         modifier = modifier
@@ -312,12 +306,12 @@ fun SearchBookGridItem(
                     .fillMaxSize()
                     .then(if (qualityMasked) Modifier.blur(8.dp) else Modifier),
                 sourceOrigin = book.origin,
+                contentScale = if (allowCoverRatioAdapt) ContentScale.Fit else ContentScale.Crop,
                 sharedTransitionScope = sharedTransitionScope,
                 animatedVisibilityScope = animatedVisibilityScope,
                 sharedCoverKey = sharedCoverKey,
                 showLoadingPlaceholder = sharedCoverKey == null,
                 onImageAspectRatio = if (allowCoverRatioAdapt) {
-                    // 比例合法性已在 BookCoverImage 上报前校验，这里直接写入
                     { imageAspectRatio -> coverAspectRatioState.floatValue = imageAspectRatio }
                 } else null
             )

@@ -66,7 +66,12 @@ fun BookInfoRouteScreen(
     onOpenReader: (bookUrl: String, inBookshelf: Boolean, chapterChanged: Boolean) -> Unit = { _, _, _ -> },
     onOpenMangaReader: (bookUrl: String, inBookshelf: Boolean, chapterChanged: Boolean) -> Unit = { _, _, _ -> },
     onOpenAudioPlay: (bookUrl: String, inBookshelf: Boolean) -> Unit = { _, _ -> },
-    onOpenVideoPlayer: (bookUrl: String, inBookshelf: Boolean) -> Unit = { _, _ -> },
+    onOpenVideoPlayer: (
+        bookUrl: String,
+        inBookshelf: Boolean,
+        coverPath: String?,
+        sharedCoverKey: String?,
+    ) -> Unit = { _, _, _, _ -> },
     onNavigateToBookInfo: (name: String?, author: String?, bookUrl: String, origin: String?, coverPath: String?) -> Unit = { _, _, _, _, _ -> },
     onNavigateToExploreShow: (title: String?, sourceUrl: String, exploreUrl: String?, usePageParamFallback: Boolean) -> Unit = { _, _, _, _ -> },
     onOpenCharacterDetail: (bookUrl: String, characterId: String?) -> Unit = { _, _ -> },
@@ -76,6 +81,13 @@ fun BookInfoRouteScreen(
     onOpenEventList: (bookUrl: String) -> Unit = {},
     /** 私密功能需要本地密码，未设置时引导去设置页（与书架同一条路径） */
     onOpenSettings: () -> Unit = {},
+    onOpenMagnetPlayer: (
+        url: String,
+        title: String?,
+        coverPath: String?,
+        author: String?,
+        intro: String?,
+    ) -> Unit = { _, _, _, _, _ -> },
     sharedTransitionScope: SharedTransitionScope? = null,
     animatedVisibilityScope: AnimatedVisibilityScope? = null,
     sharedCoverKey: String? = null,
@@ -143,7 +155,9 @@ fun BookInfoRouteScreen(
                     when {
                         effect.book.isVideo -> onOpenVideoPlayer(
                             effect.book.bookUrl,
-                            effect.inBookshelf
+                            effect.inBookshelf,
+                            effect.book.coverUrl,
+                            sharedCoverKey,
                         )
 
                         effect.book.isAudio -> onOpenAudioPlay(
@@ -259,6 +273,7 @@ fun BookInfoRouteScreen(
     // （`route.sharedCoverKey` 就是源卡片登记的那一个），页面自身不再接管返回。
     BookInfoScreen(
         state = uiState,
+        entryCoverPath = coverPath,
         groups = viewModel.allGroups
             .collectAsStateWithLifecycle(persistentListOf<BookGroup>()).value,
         onIntent = viewModel::onIntent,
@@ -272,6 +287,7 @@ fun BookInfoRouteScreen(
         sharedTransitionScope = sharedTransitionScope,
         animatedVisibilityScope = animatedVisibilityScope,
         sharedCoverKey = sharedCoverKey,
+        onOpenMagnetPlayer = onOpenMagnetPlayer,
     )
 }
 

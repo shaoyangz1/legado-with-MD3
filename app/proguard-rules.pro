@@ -146,3 +146,6 @@
 -dontwarn java.lang.management.**
 -dontwarn io.ktor.util.debug.IntellijIdeaDebugDetector
 -keep,allowobfuscation class io.ktor.util.debug.** { *; }
+
+# 迅雷 SDK：JNI 按类名/字段名静态查找，不能改名或裁剪
+-keep class com.xunlei.downloadlib.** { *; }
