@@ -137,6 +137,9 @@ sealed interface ReaderMeasuredBlock {
         val scaleMode: ReaderImageScaleMode = ReaderImageScaleMode.CONTAIN_NO_UPSCALE,
         val pageBreakBefore: Boolean = false,
         val pageBreakAfter: Boolean = false,
+        val link: String? = null,
+        /** false = 测量期拿不到内在尺寸，不能用兜底比例放大整图几何。 */
+        val dimensionsKnown: Boolean = true,
     ) : ReaderMeasuredBlock
 
     data class InlineParagraph(
@@ -193,6 +196,11 @@ sealed interface ReaderMeasuredInlineItem {
         val baselineOffsetPx: Float? = null,
         /** Positive values move this glyph below the line baseline; negative values move it above. */
         val baselineShiftPx: Float = 0f,
+        val glyphOffsetX: Float = 0f,
+        val rubyGroupId: Int = 0,
+        val rubyText: String? = null,
+        val rubyFontSizePx: Float = 0f,
+        val rubyBaselineDeltaPx: Float = 0f,
     ) : ReaderMeasuredInlineItem
 
     data class Image(
@@ -201,6 +209,8 @@ sealed interface ReaderMeasuredInlineItem {
         val heightPx: Float,
         override val chapterPosition: Int,
         val action: String? = null,
+        val link: String? = null,
+        val useMeasuredBounds: Boolean = false,
     ) : ReaderMeasuredInlineItem
 
     /**
@@ -419,6 +429,7 @@ internal class ReaderPaginationSession(
             is ReaderElement.Text -> element.copy(
                 bounds = element.bounds.offsetY(deltaY),
                 baselinePx = element.baselinePx + deltaY,
+                rubyBaselinePx = if (element.rubyText != null) element.rubyBaselinePx + deltaY else 0f,
             )
 
             is ReaderElement.Image -> element.copy(
@@ -500,7 +511,13 @@ internal class ReaderPaginationSession(
         } else finishPage()
     }
 
-    private fun addImage(image: ReaderMeasuredBlock.Image) {
+    private fun addImage(sourceBlock: ReaderMeasuredBlock.Image) {
+        // 尺寸未知时不能用 1:1 的兜底比例：FULL_WIDTH 会把它放大成整宽方形，
+        // 真实位图随后被 fitCenter 内接，留下整块空白（#2522 / #2607）。
+        val image = if (sourceBlock.dimensionsKnown) sourceBlock else sourceBlock.copy(
+            intrinsicWidthPx = config.contentWidthPx.coerceAtLeast(1f),
+            intrinsicHeightPx = config.lineHeightPx.coerceAtLeast(1f),
+        )
         if (image.pageBreakBefore) advanceColumn()
         val sourceWidth = image.intrinsicWidthPx.coerceAtLeast(1f)
         val sourceHeight = image.intrinsicHeightPx.coerceAtLeast(1f)
@@ -541,6 +558,7 @@ internal class ReaderPaginationSession(
             bounds = ReaderRect(x, y, x + width, y + height),
             source = image.source,
             action = image.action,
+            link = image.link,
             chapterPosition = image.chapterPosition,
         )
         columnRows += ReaderLayoutRow(
@@ -572,6 +590,7 @@ internal class ReaderPaginationSession(
         // 约 6 次这样的调用，是 `line-placement` 里最大的一块纯开销。
         // 顺带在建 `clusters` 那一趟里判定，不额外再扫一遍段落。
         var hasBackgroundImages = false
+        var hasRubyGroups = false
         val clusters = ArrayList<String>(paragraph.items.size)
         /**
          * 每个字要在左右两侧让出的命中字距（段内恒为 0，只有命中段首字/末字带值，见
@@ -583,6 +602,7 @@ internal class ReaderPaginationSession(
             when (item) {
                 is ReaderMeasuredInlineItem.Text -> {
                     if (item.style.backgroundImage != null) hasBackgroundImages = true
+                    if (item.rubyGroupId != 0) hasRubyGroups = true
                     matchSpacingPx[index] =
                         item.style.matchSpacingBeforePx + item.style.matchSpacingAfterPx
                     clusters += item.value
@@ -598,6 +618,10 @@ internal class ReaderPaginationSession(
             (paragraph.items[index] as? ReaderMeasuredInlineItem.Text)?.style?.backgroundImage
         } else null
 
+        val rubyGroupIds = if (hasRubyGroups) IntArray(paragraph.items.size) { index ->
+            (paragraph.items[index] as? ReaderMeasuredInlineItem.Text)?.rubyGroupId ?: 0
+        } else null
+
         val breakerWidthsPx = FloatArray(paragraph.items.size) { index ->
             paragraph.items[index].widthPx + letterSpacing + matchSpacingPx[index]
         }
@@ -611,6 +635,7 @@ internal class ReaderPaginationSession(
             letterSpacingPx = letterSpacing,
             firstLineWidthPx = (config.contentWidthPx - indentWidth)
                 .coerceAtLeast(0f).toInt(),
+            rubyGroupIds = rubyGroupIds,
         )
         val originalEnds = breaker.lineClusterStarts.drop(1)
         val refineStartNs = if (metrics != null) System.nanoTime() else 0L
@@ -660,6 +685,7 @@ internal class ReaderPaginationSession(
             // 行内图高、自然宽度、命中留白和空格数并为一次遍历，去掉原先各自产生的临时列表。
             var maxTextScale = 1f
             var maxImageHeightPx = 0f
+            var maxMeasuredImageHeightPx = 0f
             var markerColorArgb: Int? = null
             var widthSum = 0.0
             var matchSum = 0.0
@@ -679,7 +705,7 @@ internal class ReaderPaginationSession(
                     val scale = item.style.fontSizePx / paragraph.baseTextSizePx.coerceAtLeast(1f)
                     if (scale > maxTextScale) maxTextScale = scale
                     if (markerColorArgb == null) markerColorArgb = item.style.colorArgb
-                    if (item.value == " ") wordSpaceCount++
+                    if (item.value == " " && item.rubyGroupId == 0) wordSpaceCount++
                     val topPad = item.style.linePadTopPx
                     if (topPad > linePadTopPx) linePadTopPx = topPad
                     val bottomPad = item.style.linePadBottomPx
@@ -687,6 +713,9 @@ internal class ReaderPaginationSession(
                 } else {
                     val tallHeightPx = item.tallItemHeightPx()
                     if (tallHeightPx > maxImageHeightPx) maxImageHeightPx = tallHeightPx
+                    if (item is ReaderMeasuredInlineItem.Image && item.useMeasuredBounds) {
+                        maxMeasuredImageHeightPx = maxOf(maxMeasuredImageHeightPx, item.heightPx)
+                    }
                 }
             }
             val fallbackLineHeight = paragraph.lineHeightPx * maxTextScale
@@ -711,6 +740,11 @@ internal class ReaderPaginationSession(
             val textLineHeight = lineAscent + lineDescent
             val actualLineHeight = maxOf(textLineHeight, maxImageHeightPx)
             val lineBaselineOffset = lineAscent + (actualLineHeight - textLineHeight) / 2f
+            var lineAdvance = linePadBottomPx + actualLineHeight * paragraph.lineSpacingMultiplier
+            if (maxMeasuredImageHeightPx > 0f) {
+                // 紧行距时，下一行至少从定尺寸图片的底边开始。
+                lineAdvance = maxOf(lineAdvance, (actualLineHeight + maxMeasuredImageHeightPx) / 2f)
+            }
             // 命中行行距算进页底判定（对照 Legado_Max：上下两截都要落得下），否则下一行会
             // 压到上一行的九宫格上边。抬完再画，行盒本身高度不变。
             if (y + linePadTopPx + actualLineHeight + linePadBottomPx > config.contentBottomPx &&
@@ -728,10 +762,14 @@ internal class ReaderPaginationSession(
             fun isCapsule(item: ReaderMeasuredInlineItem) =
                 item is ReaderMeasuredInlineItem.RoleCast || item is ReaderMeasuredInlineItem.BgmScene
 
+            fun sameRubyGroup(a: Int, b: Int) = rubyGroupIds != null &&
+                rubyGroupIds[a] != 0 && rubyGroupIds[a] == rubyGroupIds[b]
+
             fun gapStretches(itemIndex: Int) = itemIndex >= indentItems &&
                     itemIndex < itemCount - 1 &&
                     !isCapsule(paragraph.items[from + itemIndex]) &&
-                    !isCapsule(paragraph.items[from + itemIndex + 1])
+                    !isCapsule(paragraph.items[from + itemIndex + 1]) &&
+                    !sameRubyGroup(from + itemIndex, from + itemIndex + 1)
 
             val stretchableGaps = (0 until itemCount - 1).count(::gapStretches)
             // The breaker may hang closing punctuation to preserve a forbidden break. Restore the
@@ -807,6 +845,7 @@ internal class ReaderPaginationSession(
             // Processed body text can retain its indentation as real leading glyphs.
             // The View reader started a non-extended underline after those glyphs.
             val underlineElementStart = elements.size + indentItems
+            val lineTextElementStart = elements.size
             var previousItemBackground: ReaderTextBackgroundImage? = null
             var previousMatchSpacingAfterPx = 0f
             lineItems.forEachIndexed { itemIndex, item ->
@@ -816,7 +855,7 @@ internal class ReaderPaginationSession(
                 val itemBackground = backgroundOf(from + itemIndex)
                 when (item) {
                     is ReaderMeasuredInlineItem.Text -> {
-                        val expandedWordSpace = if (item.value == " ") wordSpaceExtra else 0f
+                        val expandedWordSpace = if (item.value == " " && item.rubyGroupId == 0) wordSpaceExtra else 0f
                         elements += ReaderElement.Text(
                             bounds = ReaderRect(
                                 x, y, x + item.widthPx + expandedWordSpace, y + actualLineHeight,
@@ -851,24 +890,27 @@ internal class ReaderPaginationSession(
                             backgroundFrameBottomPx = itemBackground?.frameBottomPx(actualLineHeight) ?: 0f,
                             backgroundFrameLeftPx = itemBackground?.frameLeftPx(actualLineHeight) ?: 0f,
                             backgroundFrameRightPx = itemBackground?.frameRightPx(actualLineHeight) ?: 0f,
+                            glyphOffsetX = item.glyphOffsetX,
+                            rubyGroupId = item.rubyGroupId,
                         )
                     }
 
                     is ReaderMeasuredInlineItem.Image -> {
                         val imageTop = y + (actualLineHeight - item.heightPx) / 2f
+                        val bounds = ReaderRect(x, imageTop, x + item.widthPx, imageTop + item.heightPx)
                         elements += ReaderElement.Image(
-                            bounds = ReaderRect(
-                                x,
-                                imageTop,
-                                x + item.widthPx,
-                                imageTop + item.heightPx
-                            ),
+                            bounds = bounds,
                             source = item.source,
                             action = item.action,
+                            link = item.link,
                             chapterPosition = item.chapterPosition,
-                            // 行内图必须带标记：绘制期按位图长宽比重新算几何（旧 ImageColumn）。
                             inline = true,
-                            touchBounds = ReaderRect(x, y, x + item.widthPx, y + actualLineHeight),
+                            touchBounds = bounds.copy(
+                                top = y,
+                                bottom = y + if (item.useMeasuredBounds) minOf(actualLineHeight, lineAdvance)
+                                else actualLineHeight,
+                            ),
+                            useMeasuredBounds = item.useMeasuredBounds,
                         )
                     }
 
@@ -922,7 +964,7 @@ internal class ReaderPaginationSession(
                 )
                 x += item.widthPx + letterSpacing +
                         (matchStyle?.matchSpacingAfterPx ?: 0f) +
-                        if (item is ReaderMeasuredInlineItem.Text && item.value == " ") wordSpaceExtra else 0f
+                        if (item is ReaderMeasuredInlineItem.Text && item.value == " " && item.rubyGroupId == 0) wordSpaceExtra else 0f
                 if (gapStretches(itemIndex)) {
                     x += justifyGap
                     if (itemIndex < visibleItemCount - 1) x += compressionGap
@@ -937,6 +979,34 @@ internal class ReaderPaginationSession(
                     previousMatchSpacingAfterPx = matchStyle?.matchSpacingAfterPx ?: 0f
                 }
             }
+            if (hasRubyGroups) {
+                var rubyStart = 0
+                while (rubyStart < itemCount) {
+                    val textItem = lineItems[rubyStart] as? ReaderMeasuredInlineItem.Text
+                    val groupId = textItem?.rubyGroupId ?: 0
+                    if (groupId == 0 || textItem?.rubyText == null) {
+                        rubyStart++
+                        continue
+                    }
+                    var rubyEnd = rubyStart
+                    while (rubyEnd + 1 < itemCount &&
+                        (lineItems[rubyEnd + 1] as? ReaderMeasuredInlineItem.Text)?.rubyGroupId == groupId
+                    ) {
+                        rubyEnd++
+                    }
+                    val firstElemIndex = lineTextElementStart + rubyStart
+                    val lastElemIndex = lineTextElementStart + rubyEnd
+                    val firstElem = elements[firstElemIndex] as ReaderElement.Text
+                    val lastElem = elements[lastElemIndex] as ReaderElement.Text
+                    elements[firstElemIndex] = firstElem.copy(
+                        rubyText = textItem.rubyText,
+                        rubyFontSizePx = textItem.rubyFontSizePx,
+                        rubyBaselinePx = firstElem.baselinePx + textItem.rubyBaselineDeltaPx,
+                        rubyCenterX = (firstElem.bounds.left + lastElem.bounds.right) / 2f,
+                    )
+                    rubyStart = rubyEnd + 1
+                }
+            }
             addPageUnderline(underlineElementStart, y + actualLineHeight)
             columnRows += ReaderLayoutRow(rowElementStart, elements.size, y, y + actualLineHeight)
             // 正文所有段落（纯文本与 HTML）共用同一套行推进：行盒 × 行距倍率。
@@ -944,7 +1014,7 @@ internal class ReaderPaginationSession(
             // 会让同一页里的 HTML 段落和普通段落行距不一致。
             // 命中行行距不进行盒、也不乘行距：它是这一行之后额外留出的空白，
             // 九宫格的下边条就画在这截里。
-            y += linePadBottomPx + actualLineHeight * paragraph.lineSpacingMultiplier
+            y += lineAdvance
         }
         if (appendSeparator) {
             pageText.append('\n')

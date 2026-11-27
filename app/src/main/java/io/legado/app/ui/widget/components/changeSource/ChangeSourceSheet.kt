@@ -4,7 +4,6 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -56,16 +55,17 @@ import io.legado.app.ui.widget.components.AppTextField
 import io.legado.app.ui.widget.components.EmptyMessage
 import io.legado.app.ui.widget.components.alert.AppAlertDialog
 import io.legado.app.ui.widget.components.button.series.MediumPlainButton
-import io.legado.app.ui.widget.components.button.series.MediumTonalButton
 import io.legado.app.ui.widget.components.card.SelectionItemCard
 import io.legado.app.ui.widget.components.conflict.BookshelfConflictSheet
-import io.legado.app.ui.widget.components.menuItem.RoundDropdownMenu
 import io.legado.app.ui.widget.components.menuItem.RoundDropdownMenuItem
 import io.legado.app.ui.widget.components.modalBottomSheet.AppModalBottomSheet
+import io.legado.app.ui.widget.components.modalBottomSheet.SheetAction
+import io.legado.app.ui.widget.components.modalBottomSheet.SheetMenuAction
 import io.legado.app.ui.widget.components.progressIndicator.AppCircularProgressIndicator
 import io.legado.app.ui.widget.components.progressIndicator.AppLinearProgressIndicator
 import io.legado.app.ui.widget.components.text.AppText
 import io.legado.app.utils.toastOnUi
+import kotlinx.collections.immutable.persistentListOf
 import kotlinx.coroutines.flow.collectLatest
 import org.koin.androidx.compose.koinViewModel
 
@@ -127,7 +127,6 @@ fun ChangeSourceSheet(
     var shelfConflict by remember { mutableStateOf<PendingShelfConflict?>(null) }
     var showMigrationOptions by remember { mutableStateOf(false) }
     var loadingAction by remember { mutableStateOf(false) }
-    var showOptionsMenu by rememberSaveable { mutableStateOf(false) }
     var showFilterSheet by rememberSaveable { mutableStateOf(false) }
     val bookAddedToShelfText = stringResource(R.string.book_added_to_shelf)
     // 不在书架的书换源，只是给这本还没上架的书换个源，不存在「新增还是替换」的歧义，直接替换即可。
@@ -242,84 +241,66 @@ fun ChangeSourceSheet(
         show = show,
         onDismissRequest = onDismissRequest,
         title = stringResource(R.string.change_origin),
-        startAction = {
-            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                Box {
-                    MediumTonalButton(
-                        onClick = { showOptionsMenu = true },
+        startSheetActions = persistentListOf(
+            SheetAction(
                 icon = Icons.Default.MoreVert,
-                contentDescription = stringResource(R.string.more_menu)
-                    )
-                    RoundDropdownMenu(
-                        expanded = showOptionsMenu,
-                        onDismissRequest = { showOptionsMenu = false }
-                    ) { dismiss ->
-                        RoundDropdownMenuItem(
-                            text = "校验作者",
-                            isSelected = checkAuthor,
-                            onClick = {
-                                viewModel.onCheckAuthorChange(!checkAuthor)
-                                dismiss()
-                            }
-                        )
-                        RoundDropdownMenuItem(
-                            text = "加载详情",
-                            isSelected = loadInfo,
-                            onClick = {
-                                viewModel.onLoadInfoChange(!loadInfo)
-                                dismiss()
-                            }
-                        )
-                        RoundDropdownMenuItem(
-                            text = "加载目录",
-                            isSelected = loadToc,
-                            onClick = {
-                                viewModel.onLoadTocChange(!loadToc)
-                                dismiss()
-                            }
-                        )
-                        RoundDropdownMenuItem(
-                            text = "显示更多信息",
-                            isSelected = loadWordCount,
-                            onClick = {
-                                viewModel.onLoadWordCountChange(!loadWordCount)
-                                dismiss()
-                            }
-                        )
-                        RoundDropdownMenuItem(
-                            text = stringResource(R.string.book_source_manage),
-                            onClick = {
-                                context.startActivity(
-                                    MainActivity.createBookSourceManageIntent(
-                                        context
-                                    )
-                                )
-                                dismiss()
-                            }
-                        )
-                    }
-                }
-                MediumTonalButton(
-                    onClick = { showMigrationOptions = true },
-                    icon = Icons.Outlined.Settings,
-                    contentDescription = stringResource(R.string.setting)
-                )
-            }
-        },
-        endAction = {
-            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                MediumTonalButton(
-                    onClick = { viewModel.startOrStopSearch() },
-                    icon = if (isSearching) Icons.Default.PauseCircleOutline else Icons.Default.Refresh,
-                    contentDescription = stringResource(if (isSearching) R.string.pause else R.string.refresh),
-                )
-                MediumTonalButton(
-                    onClick = { showFilterSheet = true },
-                    icon = Icons.Default.FilterList,
-                    contentDescription = stringResource(R.string.screen)
-                )
-            }
-        }
+                contentDescription = stringResource(R.string.more_menu),
+                menu = persistentListOf(
+                    SheetMenuAction(
+                        id = "check_author",
+                        label = "校验作者",
+                        checked = checkAuthor,
+                        onClick = { viewModel.onCheckAuthorChange(!checkAuthor) },
+                    ),
+                    SheetMenuAction(
+                        id = "load_info",
+                        label = "加载详情",
+                        checked = loadInfo,
+                        onClick = { viewModel.onLoadInfoChange(!loadInfo) },
+                    ),
+                    SheetMenuAction(
+                        id = "load_toc",
+                        label = "加载目录",
+                        checked = loadToc,
+                        onClick = { viewModel.onLoadTocChange(!loadToc) },
+                    ),
+                    SheetMenuAction(
+                        id = "load_word_count",
+                        label = "显示更多信息",
+                        checked = loadWordCount,
+                        onClick = { viewModel.onLoadWordCountChange(!loadWordCount) },
+                    ),
+                    SheetMenuAction(
+                        id = "open_source_manage",
+                        label = stringResource(R.string.book_source_manage),
+                        onClick = {
+                            context.startActivity(
+                                MainActivity.createBookSourceManageIntent(context)
+                            )
+                        },
+                    ),
+                ),
+            ),
+            SheetAction(
+                onClick = { showMigrationOptions = true },
+                icon = Icons.Outlined.Settings,
+                contentDescription = stringResource(R.string.setting),
+            ),
+        ),
+        endSheetActions = persistentListOf(
+            SheetAction(
+                onClick = { viewModel.startOrStopSearch() },
+                icon = if (isSearching) Icons.Default.PauseCircleOutline else Icons.Default.Refresh,
+                contentDescription = stringResource(
+                    if (isSearching) R.string.pause else R.string.refresh
+                ),
+            ),
+            SheetAction(
+                onClick = { showFilterSheet = true },
+                icon = Icons.Default.FilterList,
+                contentDescription = stringResource(R.string.screen),
+            ),
+        ),
     ) {
         AppTextField(
             value = searchQuery,

@@ -38,12 +38,14 @@ import io.legado.app.ui.main.homepage.manage.SetListPage
 import io.legado.app.ui.main.homepage.manage.SourceBrowseDetailPage
 import io.legado.app.ui.widget.components.AppTextField
 import io.legado.app.ui.widget.components.alert.AppAlertDialog
-import io.legado.app.ui.widget.components.button.series.MediumTonalButton
 import io.legado.app.ui.widget.components.icon.AppIcon
-import io.legado.app.ui.widget.components.menuItem.RoundDropdownMenu
-import io.legado.app.ui.widget.components.menuItem.RoundDropdownMenuItem
 import io.legado.app.ui.widget.components.modalBottomSheet.AppModalBottomSheet
+import io.legado.app.ui.widget.components.modalBottomSheet.SheetAction
+import io.legado.app.ui.widget.components.modalBottomSheet.SheetMenuAction
 import kotlinx.collections.immutable.toImmutableList
+
+/** 分组筛选项里的「全部」：分组名可能重复，用保留 ID 区分。 */
+private const val HOMEPAGE_GROUP_FILTER_ALL = "homepage_group_filter_all"
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -129,73 +131,71 @@ fun <T> HomepageModuleManageSheet(
 
             else -> stringResource(R.string.homepage_module_manage)
         },
-        startAction = {
-            if (showCustomSetAddModules) {
-                MediumTonalButton(
-                        onClick = { showCustomSetAddModules = false },
-                        icon = Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = stringResource(R.string.back)
-                )
-            } else if (browsingSourceUrl != null || showSourceBrowser) {
-                MediumTonalButton(
-                    onClick = {
-                        if (browsingDetail) browsingDetail = false
-                        else if (showSourceBrowser) showSourceBrowser = false
-                        else browsingSourceUrl = null
-                    },
-                        icon = Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = stringResource(R.string.back)
-                )
-            } else if (selectingSetUrl != null) {
-                MediumTonalButton(
-                        onClick = { selectingSetUrl = null },
-                        icon = Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = stringResource(R.string.back)
-                )
-            }
+        startSheetAction = when {
+            showCustomSetAddModules -> SheetAction(
+                onClick = { showCustomSetAddModules = false },
+                icon = Icons.AutoMirrored.Filled.ArrowBack,
+                contentDescription = stringResource(R.string.back),
+            )
+
+            browsingSourceUrl != null || showSourceBrowser -> SheetAction(
+                onClick = {
+                    if (browsingDetail) browsingDetail = false
+                    else if (showSourceBrowser) showSourceBrowser = false
+                    else browsingSourceUrl = null
+                },
+                icon = Icons.AutoMirrored.Filled.ArrowBack,
+                contentDescription = stringResource(R.string.back),
+            )
+
+            selectingSetUrl != null -> SheetAction(
+                onClick = { selectingSetUrl = null },
+                icon = Icons.AutoMirrored.Filled.ArrowBack,
+                contentDescription = stringResource(R.string.back),
+            )
+
+            else -> null
         },
-        endAction = {
-            if (
-                browsingDetail &&
+        endSheetAction = when {
+            browsingDetail &&
                 browseTab == 2 &&
                 supportsMultipleKinds &&
-                selectedKindTitles.isNotEmpty()
-            ) {
-                MediumTonalButton(
-                        onClick = { showAddKindGroupDialog = true },
-                        icon = Icons.Default.Check,
-                        contentDescription = stringResource(R.string.confirm)
-                )
-            } else if ((showSourceBrowser || browsingSourceUrl != null) && !browsingDetail) {
-                var expanded by remember { mutableStateOf(false) }
-                Box {
-                    MediumTonalButton(
-                        onClick = { expanded = true },
-                        icon = Icons.Default.FilterList,
-                        contentDescription = stringResource(R.string.screen)
-                    )
-                    RoundDropdownMenu(
-                        expanded = expanded,
-                        onDismissRequest = { expanded = false }) {
-                        RoundDropdownMenuItem(
-                            text = stringResource(R.string.homepage_all_groups),
-                            onClick = { groupFilter = null; expanded = false },
-                            trailingIcon = if (groupFilter == null) {
-                                { AppIcon(Icons.Default.Check, null, Modifier.size(18.dp)) }
-                            } else null
+                selectedKindTitles.isNotEmpty() -> SheetAction(
+                onClick = { showAddKindGroupDialog = true },
+                icon = Icons.Default.Check,
+                contentDescription = stringResource(R.string.confirm),
+            )
+
+            (showSourceBrowser || browsingSourceUrl != null) && !browsingDetail -> {
+                val filterTitle = stringResource(R.string.screen)
+                SheetAction(
+                    icon = Icons.Default.FilterList,
+                    contentDescription = filterTitle,
+                    // 分组筛选项：选中项带勾，点击即生效。分组名可能重复，所以「全部」用保留 ID。
+                    menu = buildList {
+                        add(
+                            SheetMenuAction(
+                                id = HOMEPAGE_GROUP_FILTER_ALL,
+                                label = stringResource(R.string.homepage_all_groups),
+                                checked = groupFilter.isNullOrEmpty(),
+                                onClick = { groupFilter = null },
+                            )
                         )
                         allGroups.forEach { group ->
-                            RoundDropdownMenuItem(
-                                text = group,
-                                onClick = { groupFilter = group; expanded = false },
-                                trailingIcon = if (groupFilter == group) {
-                                    { AppIcon(Icons.Default.Check, null, Modifier.size(18.dp)) }
-                                } else null
+                            add(
+                                SheetMenuAction(
+                                    id = group,
+                                    label = group,
+                                    checked = groupFilter == group,
+                                    onClick = { groupFilter = group },
+                                )
                             )
                         }
-                    }
-                }
+                    }.toImmutableList(),
+                )
             }
+
+            else -> null
         }
     ) {
         var backProgress by remember { mutableFloatStateOf(0f) }

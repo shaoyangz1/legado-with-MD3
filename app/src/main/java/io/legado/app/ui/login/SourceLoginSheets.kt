@@ -46,8 +46,8 @@ import io.legado.app.data.entities.rule.ExploreKind
 import io.legado.app.help.http.handleRenderProcessGone
 import io.legado.app.ui.widget.components.modalBottomSheet.MarkdownSheet
 import io.legado.app.ui.rss.read.VisibleWebViewCompose
+import io.legado.app.ui.theme.ComposeEngine
 import io.legado.app.ui.theme.LegadoTheme
-import io.legado.app.ui.theme.ThemeResolver
 import io.legado.app.ui.widget.components.AppTextField
 import io.legado.app.ui.widget.components.button.series.MediumTonalButton
 import io.legado.app.ui.widget.components.explore.ExploreKindMultiTypeItem
@@ -55,9 +55,10 @@ import io.legado.app.ui.widget.components.explore.FlexItemLayout
 import io.legado.app.ui.widget.components.explore.calculateFlexRows
 import io.legado.app.ui.widget.components.icon.AppIcons
 import io.legado.app.ui.widget.components.log.AppLogSheet
-import io.legado.app.ui.widget.components.menuItem.RoundDropdownMenu
-import io.legado.app.ui.widget.components.menuItem.RoundDropdownMenuItem
 import io.legado.app.ui.widget.components.modalBottomSheet.AppModalBottomSheet
+import io.legado.app.ui.widget.components.modalBottomSheet.SheetAction
+import io.legado.app.ui.widget.components.modalBottomSheet.SheetMenuAction
+import kotlinx.collections.immutable.persistentListOf
 import top.yukonga.miuix.kmp.squircle.LocalSquircleEnabled
 
 @Composable
@@ -95,13 +96,11 @@ fun SourceLoginSheetHost(
         title = stringResource(R.string.login_header),
         content = header?.content.orEmpty(),
         onDismissRequest = { onIntent(SourceLoginIntent.DismissSheet) },
-        endAction = {
-            MediumTonalButton(
-                icon = Icons.Default.ContentCopy,
-                contentDescription = stringResource(R.string.copy_text),
-                onClick = { header?.content?.let { onIntent(SourceLoginIntent.CopyLoginHeader(it)) } },
-            )
-        },
+        endSheetAction = SheetAction(
+            icon = Icons.Default.ContentCopy,
+            contentDescription = stringResource(R.string.copy_text),
+            onClick = { header?.content?.let { onIntent(SourceLoginIntent.CopyLoginHeader(it)) } },
+        ),
     )
     AppLogSheet(
         show = state.activeSheet == SourceLoginSheet.Log,
@@ -114,38 +113,36 @@ private fun SourceLoginFormSheet(
     state: SourceLoginUiState,
     onIntent: (SourceLoginIntent) -> Unit,
 ) {
-    var menuExpanded by remember { mutableStateOf(false) }
     AppModalBottomSheet(
         show = state.activeSheet == SourceLoginSheet.Form,
         onDismissRequest = { onIntent(SourceLoginIntent.Back) },
         title = state.title,
-        startAction = {
-            Box {
-                MediumTonalButton(
-                    icon = AppIcons.MoreVert,
-                    contentDescription = stringResource(R.string.menu),
-                    onClick = { menuExpanded = true },
-                )
-                RoundDropdownMenu(menuExpanded, { menuExpanded = false }) { dismiss ->
-                    RoundDropdownMenuItem(stringResource(R.string.show_login_header), onClick = {
-                        dismiss(); onIntent(SourceLoginIntent.ShowLoginHeader)
-                    })
-                    RoundDropdownMenuItem(stringResource(R.string.del_login_header), onClick = {
-                        dismiss(); onIntent(SourceLoginIntent.DeleteLoginHeader)
-                    })
-                    RoundDropdownMenuItem(stringResource(R.string.log), onClick = {
-                        dismiss(); onIntent(SourceLoginIntent.ShowLog)
-                    })
-                }
-            }
-        },
-        endAction = {
-            MediumTonalButton(
-                icon = AppIcons.Check,
-                contentDescription = stringResource(R.string.ok),
-                onClick = { onIntent(SourceLoginIntent.Confirm) },
-            )
-        },
+        startSheetAction = SheetAction(
+            icon = AppIcons.MoreVert,
+            contentDescription = stringResource(R.string.menu),
+            menu = persistentListOf(
+                SheetMenuAction(
+                    id = "show_login_header",
+                    label = stringResource(R.string.show_login_header),
+                    onClick = { onIntent(SourceLoginIntent.ShowLoginHeader) },
+                ),
+                SheetMenuAction(
+                    id = "delete_login_header",
+                    label = stringResource(R.string.del_login_header),
+                    onClick = { onIntent(SourceLoginIntent.DeleteLoginHeader) },
+                ),
+                SheetMenuAction(
+                    id = "show_log",
+                    label = stringResource(R.string.log),
+                    onClick = { onIntent(SourceLoginIntent.ShowLog) },
+                ),
+            ),
+        ),
+        endSheetAction = SheetAction(
+            onClick = { onIntent(SourceLoginIntent.Confirm) },
+            icon = AppIcons.Check,
+            contentDescription = stringResource(R.string.ok),
+        ),
     ) {
         val rows = remember(state.rows) {
             calculateFlexRows(state.rows, maxSpan = 6) { row ->
@@ -235,7 +232,7 @@ private fun SourceLoginRow(
                 modifier = modifier,
                 backgroundColor = LegadoTheme.colorScheme.surface,
                 minHeight = 44.dp,
-                isMiuix = ThemeResolver.isMiuixEngine(LegadoTheme.composeEngine),
+                isMiuix = LegadoTheme.composeEngine == ComposeEngine.Miuix,
                 displayNameOverride = row.title,
                 valueOverride = value,
                 onValueChange = onValueChange,
@@ -285,13 +282,11 @@ private fun SourceLoginWebSheet(
             show = state.mode == SourceLoginMode.Web && !state.loading,
             onDismissRequest = { onIntent(SourceLoginIntent.Back) },
             title = state.title,
-            endAction = {
-                MediumTonalButton(
-                    icon = AppIcons.Check,
-                    contentDescription = stringResource(R.string.ok),
-                    onClick = { onIntent(SourceLoginIntent.Confirm) },
-                )
-            },
+            endSheetAction = SheetAction(
+                onClick = { onIntent(SourceLoginIntent.Confirm) },
+                icon = AppIcons.Check,
+                contentDescription = stringResource(R.string.ok),
+            ),
             contentPaddingEnabled = false,
             sheetGesturesEnabled = false,
         ) {

@@ -41,6 +41,10 @@ data class ReaderTextStyle(
     val linePadTopPx: Float = 0f,
     /** 命中行行距（px）：这一行之后多留的空白。 */
     val linePadBottomPx: Float = 0f,
+    /** Semantic HTML mark; its background color is resolved at draw time. */
+    val marked: Boolean = false,
+    /** Reader foreground to fall back to when [colorArgb] comes from the book. */
+    val bookColorFallbackArgb: Int? = null,
 )
 
 data class ReaderTextBackgroundImage(
@@ -254,6 +258,13 @@ sealed interface ReaderElement {
         val backgroundFrameRightPx: Float = 0f,
         /** 同一行内紧随同背景图元素之后（对照旧 View TextLine 的行内连续绘制）。 */
         val continuesBackgroundRun: Boolean = false,
+        val glyphOffsetX: Float = 0f,
+        val rubyText: String? = null,
+        val rubyFontSizePx: Float = 0f,
+        val rubyBaselinePx: Float = 0f,
+        val rubyCenterX: Float = 0f,
+        /** Non-zero for every glyph of a ruby base group; merged runs must keep the whole group separate. */
+        val rubyGroupId: Int = 0,
     ) : ReaderElement {
         /** HTML links keep the legacy reader's accent priority, including during read-aloud. */
         fun resolvedColorArgb(accentColorArgb: Int): Int =
@@ -268,17 +279,13 @@ sealed interface ReaderElement {
         val source: String,
         val action: String?,
         val chapterPosition: Int = 0,
-        /**
-         * 文字嵌入（行内图），对照旧 View `TextChapterLayout` 的 `ImageColumn`：**宽恒为一个
-         * 字符格**，高按实际加载到的位图长宽比换算，竖直居中于行盒且允许高于当前行。
-         *
-         * [bounds] 里的高是测量期由 `imageDimensionsResolver` 给出的长宽比，只用于行盒预留；
-         * 绘制期必须按位图重算（见 `ReaderImageDrawLayout.forElement`），否则测量期长宽比与
-         * 位图不一致时 `fitCenter` 会在格内留白、把图片画小。
-         */
+        /** 行内图默认沿用旧 ImageColumn 的字符格绘制。 */
         val inline: Boolean = false,
-        /** 行内图按整行高度命中，绘制仍使用 [bounds]；独立图默认命中自身。 */
+        /** 行内图沿行盒扩大命中范围，独立图默认命中自身。 */
         val touchBounds: ReaderRect = bounds,
+        val link: String? = null,
+        /** 显式定尺寸的本地行内图按 [bounds] 绘制。 */
+        val useMeasuredBounds: Boolean = false,
     ) : ReaderElement
 
     data class Review(
@@ -390,7 +397,11 @@ data class ReaderPage(
 ) {
     fun elementAt(x: Float, y: Float): ReaderElement? =
         elements.firstOrNull {
-            (if (it is ReaderElement.Image) it.touchBounds else it.bounds).contains(x, y)
+            if (it is ReaderElement.Image) {
+                it.touchBounds.contains(x, y) && (!it.useMeasuredBounds || y < it.touchBounds.bottom)
+            } else {
+                it.bounds.contains(x, y)
+            }
         }
 
     fun hasSameGeometryAs(other: ReaderPage): Boolean =

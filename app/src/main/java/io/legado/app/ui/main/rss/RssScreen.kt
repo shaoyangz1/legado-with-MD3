@@ -1,5 +1,6 @@
 package io.legado.app.ui.main.rss
 
+import androidx.annotation.StringRes
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -7,6 +8,11 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -55,16 +61,24 @@ import io.legado.app.ui.theme.LegadoTheme
 import io.legado.app.ui.theme.adaptiveContentPadding
 import io.legado.app.ui.theme.LocalBottomOverlayPadding
 import io.legado.app.ui.widget.components.alert.AppAlertDialog
+import io.legado.app.ui.widget.components.coui.rememberAppVerticalOverscrollEffect
 import io.legado.app.ui.widget.components.card.GlassCard
-import io.legado.app.ui.widget.components.divider.PillDivider
-import io.legado.app.ui.widget.components.divider.PillHeaderDivider
+import io.legado.app.ui.widget.components.menu.AppAction
+import io.legado.app.ui.widget.components.menu.AppActionGroup
+import io.legado.app.ui.widget.components.menu.AppActionMenu
+import kotlinx.collections.immutable.ImmutableList
+import kotlinx.collections.immutable.persistentListOf
+import kotlinx.collections.immutable.toImmutableList
+import io.legado.app.ui.main.LocalMainPageIndex
+import io.legado.app.ui.main.LocalMainPagerTopBarHost
+import io.legado.app.ui.main.MainPagerPageChromeEffect
+import io.legado.app.ui.widget.components.SearchBar
 import io.legado.app.ui.widget.components.icon.AppIcon
+import io.legado.app.ui.widget.components.icon.AppIcons
 import io.legado.app.ui.widget.components.image.sourceIcon.SourceIcon
 import io.legado.app.ui.widget.components.list.ListScaffold
-import io.legado.app.ui.widget.components.menuItem.MenuItemIcon
-import io.legado.app.ui.widget.components.menuItem.RoundDropdownMenu
-import io.legado.app.ui.widget.components.menuItem.RoundDropdownMenuItem
 import io.legado.app.ui.widget.components.text.AppText
+import io.legado.app.ui.widget.components.topbar.TopBarActionButton
 import io.legado.app.utils.openUrl
 import io.legado.app.utils.toastOnUi
 import kotlinx.coroutines.flow.collectLatest
@@ -160,6 +174,76 @@ fun RssScreen(
     val sourceToDelete = remember(sourceToDeleteUrl, state.items) {
         state.items.firstOrNull { it.sourceUrl == sourceToDeleteUrl }
     }
+    val pagerTopBarHost = LocalMainPagerTopBarHost.current
+    val mainPageIndex = LocalMainPageIndex.current
+    val allGroupLabel = stringResource(R.string.all)
+    val rssMenuGroups = persistentListOf(
+        AppActionGroup(
+            id = "rss_manage",
+            actions = persistentListOf(
+                AppAction("source_manage", stringResource(R.string.rss_feed_management)),
+            ),
+        ),
+        AppActionGroup(
+            id = "rss_groups",
+            actions = buildList {
+                add(AppAction("group:", allGroupLabel))
+                state.groups.forEach { group ->
+                    add(AppAction("group:$group", group))
+                }
+            }.toImmutableList(),
+        ),
+    )
+    val onRssMenuAction: (String) -> Unit = { id ->
+        when {
+            id == "source_manage" -> onIntent(RssIntent.OpenSourceManage)
+            id.startsWith("group:") ->
+                onIntent(RssIntent.SetGroup(id.removePrefix("group:")))
+        }
+    }
+    if (pagerTopBarHost != null) {
+        MainPagerPageChromeEffect(
+            host = pagerTopBarHost,
+            pageIndex = mainPageIndex,
+            subtitle = state.group.ifEmpty { allGroupLabel },
+            actions = {
+                TopBarActionButton(
+                    onClick = { onIntent(RssIntent.ToggleSearch(!state.isSearch)) },
+                    imageVector = AppIcons.Search,
+                    contentDescription = stringResource(R.string.search),
+                )
+                AppActionMenu(
+                    groups = rssMenuGroups,
+                    onAction = onRssMenuAction,
+                ) {
+                    AppIcon(
+                        imageVector = AppIcons.MoreVert,
+                        contentDescription = stringResource(R.string.more_menu),
+                        modifier = this.modifier,
+                    )
+                }
+            },
+            bottomContent = {
+                AnimatedVisibility(
+                    visible = state.isSearch,
+                    enter = expandVertically() + fadeIn(),
+                    exit = shrinkVertically() + fadeOut(),
+                ) {
+                    SearchBar(
+                        query = state.searchKey,
+                        onQueryChange = { onIntent(RssIntent.Search(it)) },
+                        onSearch = { onIntent(RssIntent.Search(it)) },
+                        placeholder = stringResource(R.string.search_rss_source),
+                        onClear = { onIntent(RssIntent.Search("")) },
+                    )
+                }
+            },
+        )
+    }
+    // 横划模式下主壳已经渲染顶栏，这里只保留一个空顶栏占位，避免出现两层顶栏。
+    val rssTopBarOverride: (@Composable () -> Unit)? = if (pagerTopBarHost != null) {
+        {}
+    } else null
 
     ListScaffold(
             title = stringResource(R.string.rss),
@@ -169,35 +253,19 @@ fun RssScreen(
             onSearchToggle = { onIntent(RssIntent.ToggleSearch(it)) },
             onSearchQueryChange = { onIntent(RssIntent.Search(it)) },
             searchPlaceholder = stringResource(R.string.search_rss_source),
-            dropDownMenuContent = { dismiss ->
-                RoundDropdownMenuItem(
-                    onClick = {
-                        onIntent(RssIntent.OpenSourceManage)
-                        dismiss()
-                    },
-                    text = stringResource(R.string.rss_feed_management),
-                )
-                PillDivider()
-                RoundDropdownMenuItem(
-                    text = stringResource(R.string.all),
-                    onClick = {
-                        onIntent(RssIntent.SetGroup(""))
-                        dismiss()
-                    }
-                )
-                state.groups.forEach { group ->
-                    RoundDropdownMenuItem(
-                        text = group,
-                        onClick = {
-                            onIntent(RssIntent.SetGroup(group))
-                            dismiss()
-                        }
-                    )
+            menuGroups = rssMenuGroups,
+            onMenuAction = { id ->
+                when {
+                    id == "source_manage" -> onIntent(RssIntent.OpenSourceManage)
+                    id.startsWith("group:") ->
+                        onIntent(RssIntent.SetGroup(id.removePrefix("group:")))
                 }
             },
-            contentWindowInsets = WindowInsets(0)
+            contentWindowInsets = WindowInsets(0),
+            topBarOverride = rssTopBarOverride,
         ) { paddingValues ->
             LazyVerticalGrid(
+                overscrollEffect = rememberAppVerticalOverscrollEffect(),
                 columns = GridCells.Adaptive(minSize = 72.dp),
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = adaptiveContentPadding(
@@ -300,6 +368,54 @@ fun RssScreen(
     )
 }
 
+/** RSS 源长按菜单的稳定 ID：声明与分派共用，避免字面量漂移。 */
+private enum class RssSourceMenuAction(val id: String, @StringRes val labelRes: Int) {
+    ToTop("to_top", R.string.to_top),
+    Edit("edit", R.string.edit),
+    Login("login", R.string.login),
+    Disable("disable_source", R.string.disable_source),
+    Delete("delete", R.string.delete),
+}
+
+@Composable
+private fun rssSourceMenuGroups(hasLogin: Boolean): ImmutableList<AppActionGroup> {
+    val actions = RssSourceMenuAction.entries.mapNotNull { action ->
+        if (action == RssSourceMenuAction.Login && !hasLogin) return@mapNotNull null
+        AppAction(
+            id = action.id,
+            label = stringResource(action.labelRes),
+            icon = when (action) {
+                RssSourceMenuAction.ToTop -> Icons.Default.VerticalAlignTop
+                RssSourceMenuAction.Edit -> Icons.Default.Edit
+                RssSourceMenuAction.Login -> Icons.AutoMirrored.Filled.Login
+                RssSourceMenuAction.Disable -> Icons.Default.Close
+                RssSourceMenuAction.Delete -> Icons.Default.Delete
+            },
+            destructive = action == RssSourceMenuAction.Delete,
+        )
+    }
+    return persistentListOf(
+        AppActionGroup(id = "rss_source_item", actions = actions.toImmutableList()),
+    )
+}
+
+private fun rssSourceMenuActionFor(
+    id: String,
+    onTop: () -> Unit,
+    onEdit: () -> Unit,
+    onLogin: () -> Unit,
+    onDisable: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    when (id) {
+        RssSourceMenuAction.ToTop.id -> onTop()
+        RssSourceMenuAction.Edit.id -> onEdit()
+        RssSourceMenuAction.Login.id -> onLogin()
+        RssSourceMenuAction.Disable.id -> onDisable()
+        RssSourceMenuAction.Delete.id -> onDelete()
+    }
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun RssSourceGridItem(
@@ -339,60 +455,18 @@ fun RssSourceGridItem(
                 sourceOrigin = source.sourceUrl,
                 modifier = Modifier.size(48.dp)
             )
-            RoundDropdownMenu(
-                expanded = showMenu,
-                onDismissRequest = { showMenu = false }
-            ) {
-                PillHeaderDivider(title = source.sourceName)
-                RoundDropdownMenuItem(
-                    leadingIcon = { MenuItemIcon(Icons.Default.VerticalAlignTop) },
-                    text = stringResource(R.string.to_top),
-                    onClick = {
-                        onTop()
-                        showMenu = false
-                    }
-                )
-                RoundDropdownMenuItem(
-                    leadingIcon = { MenuItemIcon(Icons.Default.Edit) },
-                    text = stringResource(R.string.edit),
-                    onClick = {
-                        onEdit()
-                        showMenu = false
-                    }
-                )
-                if (!source.loginUrl.isNullOrBlank()) {
-                    RoundDropdownMenuItem(
-                        leadingIcon = { MenuItemIcon(Icons.AutoMirrored.Filled.Login) },
-                        text = stringResource(R.string.login),
-                        onClick = {
-                            onLogin()
-                            showMenu = false
-                        }
-                    )
-                }
-                RoundDropdownMenuItem(
-                    leadingIcon = { MenuItemIcon(Icons.Default.Close) },
-                    text = stringResource(R.string.disable_source),
-                    onClick = {
-                        onDisable()
-                        showMenu = false
-                    }
-                )
-                RoundDropdownMenuItem(
-                    leadingIcon = {
-                        MenuItemIcon(
-                            Icons.Default.Delete,
-                            tint = LegadoTheme.colorScheme.error
-                        )
-                    },
-                    text = stringResource(R.string.delete),
-                    color = LegadoTheme.colorScheme.error,
-                    onClick = {
-                        onDelete()
-                        showMenu = false
-                    }
-                )
-            }
+            // 源名不再放进菜单：原生菜单不渲染分组标题文字，图下已有常驻源名，
+            // 长按菜单只保留命令项；删除项走 destructive 落色。
+            AppActionMenu(
+                groups = rssSourceMenuGroups(hasLogin = !source.loginUrl.isNullOrBlank()),
+                onAction = { id ->
+                    rssSourceMenuActionFor(id, onTop, onEdit, onLogin, onDisable, onDelete)
+                },
+                modifier = Modifier.matchParentSize(),
+                embeddedExpanded = showMenu,
+                onDismissRequest = { showMenu = false },
+                trigger = {},
+            )
         }
         Spacer(modifier = Modifier.height(8.dp))
         AppText(

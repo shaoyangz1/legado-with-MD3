@@ -8,6 +8,7 @@ import io.legado.app.feature.reader.core.source.ReaderChapterSourceBlock
 import io.legado.app.feature.reader.core.source.ReaderChapterSourceParser
 import io.legado.app.feature.reader.core.source.ReaderChapterInlineSource
 import io.legado.app.help.book.MixedContentSegments
+import io.legado.app.model.localBook.LocalBookSemanticHtml
 import org.junit.Assert.*
 import org.junit.Test
 
@@ -21,6 +22,75 @@ class JsoupReaderPresentationParserTest {
         .flatMap { it.items }.filterIsInstance<ReaderChapterInlineSource.Text>()
     private fun paragraph(source: ReaderChapterSource, text: String) = source.blocks.filterIsInstance<ReaderChapterSourceBlock.Paragraph>()
         .first { it.items.filterIsInstance<ReaderChapterInlineSource.Text>().joinToString("") { item -> item.value }.contains(text) }
+
+    @Test fun cssColorAndRelativeSizeReachCanonicalText() {
+        val doc = org.jsoup.Jsoup.parse("<head><style>.note {color:red;font-size:80%}</style></head>" +
+            "<body><p id='n' class='note'>甲<span style='color:#0f8;font-size:1.5em'>乙</span>" +
+            "<a href='#n' style='color:rgb(1, 2, 3)'>丙</a><img src='x'></p></body>")
+        io.legado.app.model.localBook.LocalBookSemanticHtml.inlineDocumentCssSemantics(doc) { null }
+        val current = source(doc.body().outerHtml())
+        assertEquals("甲乙丙\uFFFC\n", current.semanticContent)
+        assertEquals(listOf(0), current.paragraphs.map { it.ordinal })
+        assertEquals(0, current.anchorPositions["n"])
+        val items = texts(current)
+        assertEquals(0xFFFF0000.toInt(), items[0].style.colorArgb)
+        assertEquals(0.8f, items[0].style.fontSizeScale, 0.001f)
+        assertEquals(0xFF00FF88.toInt(), items[1].style.colorArgb)
+        assertEquals(1.2f, items[1].style.fontSizeScale, 0.001f)
+        assertEquals(0xFF010203.toInt(), items[2].style.colorArgb)
+        assertEquals("#n", items[2].style.link)
+        assertTrue(ReaderSemanticContract.validate(current).isEmpty())
+    }
+
+    @Test fun cssSizeOverridesTagDefaultsAndInheritsOnce() {
+        val current = source("<h2 style='font-size:80%'><span>甲</span><small style='font-size:80%'>乙</small></h2>" +
+            "<p style='font-size:large'><span style='font-size:small'>丙</span>" +
+            "<span style='font-size:initial'>丁</span><span style='font-size:inherit'>戊</span></p>")
+        listOf(0.8f, 0.64f, 0.8f, 1f, 1.25f).zip(texts(current)).forEach { (expected, item) ->
+            assertEquals(expected, item.style.fontSizeScale, 0.001f)
+        }
+        assertEquals(700, texts(current).first().style.fontWeight)
+    }
+
+    @Test fun relativeKeywordsAndClampingDoNotCompoundTagDefaults() {
+        for ((value, expected) in listOf("small" to 0.8f, "medium" to 1f, "large" to 1.25f,
+            "smaller" to 0.64f, "larger" to 1f, "inherit" to 0.8f, "initial" to 1f)) {
+            val current = source("<p style='font-size:80%'><small style='font-size:$value'>甲</small></p>")
+            assertEquals(value, expected, texts(current).single().style.fontSizeScale, 0.001f)
+        }
+        val current = source("<div style='font-size:3em'>甲<span style='font-size:25%'>乙</span></div>")
+        assertEquals(2f, texts(current)[0].style.fontSizeScale, 0f)
+        assertEquals(0.75f, texts(current)[1].style.fontSizeScale, 0f)
+    }
+
+    @Test fun invalidCssValuesInheritAndRelativeSizeIsBounded() {
+        for (invalid in listOf("0", "-1em", "NaNem", "Infinityem", "10px", "calc(1em)", "80% !important")) {
+            val current = source("<p style='color:navy;font-size:80%'><span style='color:rgba(1,2,3,0);font-size:$invalid'>甲</span></p>")
+            assertEquals(invalid, 0.8f, texts(current).single().style.fontSizeScale, 0.001f)
+            assertEquals(invalid, 0xFF000080.toInt(), texts(current).single().style.colorArgb)
+        }
+        assertEquals(0.5f, texts(source("<span style='font-size:1%'>甲</span>")).single().style.fontSizeScale, 0f)
+        assertEquals(2f, texts(source("<span style='font-size:100em'>甲</span>")).single().style.fontSizeScale, 0f)
+        assertEquals(0.64f, texts(source("<small><span style='font-size:smaller'>甲</span></small>")).single().style.fontSizeScale, 0.001f)
+    }
+
+    @Test fun markIsInheritedWithoutChangingCanonicalTextOrOtherStyles() {
+        val current = source("<p id='n'>甲<mark><b>乙</b><a href='#n'>丙</a></mark>丁</p>")
+        assertEquals("甲乙丙丁\n", current.semanticContent)
+        assertEquals(listOf(false, true, true, false), texts(current).map { it.style.marked })
+        assertEquals(700, texts(current)[1].style.fontWeight)
+        assertEquals("#n", texts(current)[2].style.link)
+        assertEquals(0, current.anchorPositions["n"])
+    }
+
+    @Test fun cssColorsAreStrictAndInvalidValuesInherit() {
+        for ((value, expected) in listOf("#123456" to 0xFF123456.toInt(), "LiMe" to 0xFF00FF00.toInt(),
+            "rgb(255, 0, 128)" to 0xFFFF0080.toInt(), "rgb(256,0,0)" to 0xFF000080.toInt(),
+            "#abcd" to 0xFF000080.toInt(), "transparent" to 0xFF000080.toInt())) {
+            assertEquals(value, expected, texts(source("<p style='color:navy'><span style='color:$value'>甲</span></p>"))
+                .single().style.colorArgb)
+        }
+    }
 
     @Test fun blockStylesReachTextAndStayScopedToTheirBlock() {
         val current = source("<blockquote style='font-style:italic'><p style='font-weight:bold'>styled</p></blockquote><p>plain</p>")
@@ -65,9 +135,52 @@ class JsoupReaderPresentationParserTest {
     @Test fun rubyRetainsLegacyCharactersWithoutSuppressingOtherStyles() {
         for (annotation in listOf("<rt>かん</rt>", "")) {
             val current = source("<p><ruby>漢$annotation</ruby><b>字</b></p>")
-            assertEquals(if (annotation.isEmpty()) "漢字\n" else "漢かん字\n", current.semanticContent)
+            assertEquals("漢字\n", current.semanticContent)
+            assertEquals(if (annotation.isEmpty()) null else "かん", texts(current).single { it.value == "漢" }.style.ruby)
             assertEquals(700, texts(current).single { it.value == "字" }.style.fontWeight)
         }
+        assertEquals("漢", LocalBookSemanticHtml.plainText("<ruby>漢<rt>かん</rt></ruby>").trim())
+        assertEquals("前漢後", LocalBookSemanticHtml.plainText(
+            "<p>前<ruby>漢<rt>かん</rt><rp>(</rp></ruby>後</p>").trim())
+        for (malformed in listOf(
+            "<p>前<ruby>漢<rt>かん</ruby>後</p>",
+            "<p>前<ruby>漢<rt>かん</rp></ruby>後</p>",
+        )) {
+            val plain = LocalBookSemanticHtml.plainText(malformed)
+            assertTrue("$malformed -> $plain", plain.contains("前") && plain.contains("後"))
+        }
+        val sized = source("<p><ruby><rb style='font-size:120%'>漢</rb><rt>かん</rt></ruby></p>")
+        assertEquals(1.2f, texts(sized).single { it.value == "漢" }.style.fontSizeScale, 0.001f)
+        val styled = source("<p><ruby><rb>東<em>京</em></rb><rt>とうきょう</rt></ruby></p>")
+        val styledBase = texts(styled).filter { it.value.isNotEmpty() }
+        assertEquals("東京", styledBase.joinToString("") { it.value })
+        assertTrue(styledBase.all { it.style.italic != true })
+        assertEquals("とうきょう", styledBase.first { it.style.ruby != null }.style.ruby)
+        val multi = source(
+            "<p>前文<a href='#n'><ruby><rb>十</rb><rt>じゆう</rt><rb>力</rb><rt>りき＊</rt></ruby></a>中" +
+                "<ruby>饕<rp>(</rp><rt>tāo</rt><rp>)</rp>餮<rp>(</rp><rt>tiè</rt><rp>)</rp></ruby>" +
+                "<ruby><rb>道</rb><rt>ㄉㄠˋ</rt></ruby>" +
+                "<ruby><rb>read</rb><rt>/riːd/</rt></ruby>" +
+                "<ruby><rbc><rb>東</rb><rb>京</rb></rbc><rtc><rt>Tokyo</rt></rtc></ruby>尾文。</p>"
+        )
+        assertEquals("前文十力中饕餮道read東京尾文。\n", multi.semanticContent)
+        assertEquals(
+            listOf(
+                "前文" to null,
+                "十" to "じゆう",
+                "力" to "りき＊",
+                "中" to null,
+                "饕" to "tāo",
+                "餮" to "tiè",
+                "道" to "ㄉㄠˋ",
+                "read" to "/riːd/",
+                "東京" to "Tokyo",
+                "尾文。" to null,
+            ),
+            texts(multi).map { it.value to it.style.ruby },
+        )
+        assertEquals("#n", texts(multi).first { it.value == "十" }.style.link)
+        assertEquals("#n", texts(multi).first { it.value == "力" }.style.link)
     }
 
     @Test fun trimsLeadingParagraphIndentationAndPreservesNestedHeadingScale() {
@@ -100,7 +213,7 @@ class JsoupReaderPresentationParserTest {
             "甲乙" to "甲乙\n", "甲😀乙" to "甲😀乙\n", "A&amp;B" to "A&B\n",
             "<p>A</p><p>B</p>" to "A\nB\n", "<strong>A</strong>B" to "AB\n",
             "A<img src='x'>B" to "A\uFFFCB\n", "A<img>B" to "A<img>B\n", "<p></p>" to "", "<hr>" to "",
-            "<ruby>漢<rt>かん</rt><rp>(</rp></ruby>" to "漢かん(\n",
+            "<ruby>漢<rt>かん</rt><rp>(</rp></ruby>" to "漢\n",
             "<a id='n'></a>正文" to "正文\n", "<pre>A  B</pre>" to "A  B\n", "A<br><br>B" to "A\nB\n",
         )) {
             val current = source(html)
@@ -132,7 +245,7 @@ class JsoupReaderPresentationParserTest {
     }
 
     @Test fun knownEditsAndRoleLabelsPreserveUnaffectedAppearance() {
-        val html = "<p id='n'><b>“甲”</b></p><p><a href='#n'>乙</a></p>"
+        val html = "<p id='n'><b><mark style='color:red;font-size:80%'>“甲”</mark></b></p><p><a href='#n'>乙</a></p>"
         val appearance = ReaderLocalPresentationResolver.resolve(html)!!
         val offset = appearance.content.indexOf("甲")
         val map = TextProjection(appearance.content.length)
@@ -140,7 +253,11 @@ class JsoupReaderPresentationParserTest {
         val changed = appearance.content.replaceRange(offset, offset + 1, "替换")
         val mapped = appearance.remapOrNull(map, changed)!!
         val edited = ReaderChapterSourceParser.parse(0, "", MixedContentSegments.paragraphs(changed, "", false), false, true, localPresentation = mapped)
-        assertEquals(700, texts(edited).first { it.value.contains("替换") }.style.fontWeight)
+        val replacement = texts(edited).first { it.value.contains("替换") }.style
+        assertEquals(700, replacement.fontWeight)
+        assertEquals(true, replacement.marked)
+        assertEquals(0xFFFF0000.toInt(), replacement.colorArgb)
+        assertEquals(0.8f, replacement.fontSizeScale, 0.001f)
         val current = source(html, mapOf(0 to "<<甲（池）>>"))
         assertEquals("“<<甲（池）>>甲”\n乙\n", current.semanticContent)
         assertEquals(700, texts(current).first { it.value.contains("甲”") }.style.fontWeight)

@@ -1,5 +1,10 @@
 package io.legado.app.feature.reader.core.layout
 
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
+import io.legado.app.feature.reader.bookForegroundOverrides
+import io.legado.app.feature.reader.core.model.ReaderElement
+import io.legado.app.feature.reader.core.model.ReaderImageDrawLayout
 import io.legado.app.feature.reader.core.model.ReaderTextStyle
 import io.legado.app.feature.reader.core.source.ReaderChapterInlineSource
 import io.legado.app.feature.reader.core.source.ReaderChapterSource
@@ -10,15 +15,88 @@ import io.legado.app.feature.reader.core.source.ReaderTitleSegmentation
 import io.legado.app.feature.reader.core.style.ReaderCharacterStyle
 import io.legado.app.feature.reader.core.style.ReaderStyleRange
 import io.legado.app.feature.reader.core.style.ReaderStyleTarget
+import io.legado.app.feature.reader.platform.ReaderLocalPresentationResolver
+import io.legado.app.help.book.MixedContentSegments
+import io.legado.app.model.localBook.LocalBookSemanticHtml
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
+import org.jsoup.Jsoup
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import kotlin.coroutines.cancellation.CancellationException
 
 class ReaderChapterBlockMeasurerTest {
+    @Test
+    fun linkedLocalIconUsesScreenDensityAndCanBeTappedAcrossItsLine() = runBlocking {
+        val doc = Jsoup.parse("""
+            <style>.notes a img { width: 16px; height: 1em; }</style>
+            <section class="notes"><p>甲<a href="#note"><img src="note.png"></a>乙</p>
+            <p id="note">注释</p></section>
+        """.trimIndent())
+        LocalBookSemanticHtml.inlineDocumentCssSemantics(doc) { null }
+        val appearance = checkNotNull(ReaderLocalPresentationResolver.resolve(doc.body().outerHtml()))
+        val paragraphs = MixedContentSegments.paragraphs(appearance.content, "", false)
+        val styled = ReaderChapterSourceParser.parse(0, "", paragraphs, false, true, localPresentation = appearance)
+        val plain = ReaderChapterSourceParser.parse(0, "", paragraphs, false, false)
+        assertEquals("甲\uFFFC乙\n注释\n", styled.semanticContent)
+        assertEquals(plain.semanticContent, styled.semanticContent)
+        assertEquals(plain.paragraphs, styled.paragraphs)
+        assertEquals(4, styled.anchorPositions["note"])
+
+        val measurer = ReaderChapterBlockMeasurer(shaper, shaper, { ReaderImageDimensions(20f, 100f) })
+        val measureStyle = style.copy(
+            bodyStyle = style.bodyStyle.copy(fontSizePx = 30f),
+            bodyIndentCharacters = 0,
+            bodyLineHeightPx = 48f,
+            bodyBaselineOffsetPx = 36f,
+            localImageDensity = 3f,
+        )
+        val measured = measurer.measure(styled, measureStyle) as ReaderChapterMeasureResult.Success
+        val page = ReaderPaginator.paginateBlocks(measured.blocks, ReaderPaginationConfig(
+            0, "", 500, 1000, 0f, 0f, 0f, 0f, 48f, 36f,
+        )).single()
+        val image = page.elements.filterIsInstance<ReaderElement.Image>().single()
+        assertTrue(image.inline)
+        assertEquals(1, image.chapterPosition)
+        assertEquals("#note", image.link)
+        assertTrue(image.touchBounds.top < image.bounds.top)
+        assertEquals(image, page.elementAt(image.bounds.left + 5f, image.bounds.top - 1f))
+        assertEquals(
+            ReaderImageDrawLayout(image.bounds.left, image.bounds.top, 48f, 30f),
+            ReaderImageDrawLayout.forElement(image, 20, 100),
+        )
+        val singlePage = measurer.measure(styled, measureStyle.copy(
+            imageLayoutMode = ReaderImageLayoutMode.SINGLE_PAGE,
+        )) as ReaderChapterMeasureResult.Success
+        val standalone = singlePage.blocks.filterIsInstance<ReaderMeasuredBlock.Image>().single()
+        assertTrue(standalone.pageBreakBefore && standalone.pageBreakAfter)
+    }
+
+    @Test
+    fun tallLocalIconDoesNotInterceptTheNextLineInTightSpacing() {
+        val paragraph = ReaderMeasuredBlock.InlineParagraph(
+            items = listOf(
+                ReaderMeasuredInlineItem.Image("note.png", 12f, 20f, 0, link = "#note", useMeasuredBounds = true),
+                ReaderMeasuredInlineItem.Text("甲", 12f, style.bodyStyle, 1),
+            ),
+            indentCharacters = 0,
+            alignment = ReaderTextAlignment.START,
+            lineHeightPx = 12f,
+            baselineOffsetPx = 9f,
+            baseTextSizePx = 10f,
+            lineSpacingMultiplier = 0.8f,
+        )
+        val page = ReaderPaginator.paginateBlocks(listOf(paragraph), ReaderPaginationConfig(
+            0, "", 15, 100, 0f, 0f, 0f, 0f, 12f, 9f,
+        )).single()
+        val image = page.elements.filterIsInstance<ReaderElement.Image>().single()
+        val text = page.elements.filterIsInstance<ReaderElement.Text>().single()
+        assertTrue(text.bounds.top >= image.bounds.bottom)
+        assertEquals(text, page.elementAt(text.bounds.left + 5f, text.bounds.top))
+    }
+
     @Test
     fun localPresentationKeepsCanonicalBodyAndBgmOrdinalsWhileDrawingRulesAndNumbers() = runBlocking {
         val fixture = io.legado.app.support.ReaderSemanticFixtures
@@ -54,6 +132,57 @@ class ReaderChapterBlockMeasurerTest {
         assertTrue(positions.all { it in 0..source.characterCount })
         assertTrue(smallPages.flatMap { it.elements }.filterIsInstance<io.legado.app.feature.reader.core.model.ReaderElement.Spacer>()
             .any { it.semanticLength == 0 })
+    }
+
+    @Test
+    fun localMarkColorAndSizeReachPagedGlyphsWithoutChangingPositions() = runBlocking {
+        val html = "<p id='n' style='color:black'><mark style='color:red;font-size:150%'>甲乙</mark>" +
+            "<small><a href='#n'>丙丁</a></small>戊己<span style='color:navy'>庚</span>" +
+            "<span style='color:teal'>辛</span>壬癸</p>"
+        val appearance = checkNotNull(io.legado.app.feature.reader.platform.ReaderLocalPresentationResolver.resolve(html))
+        val source = ReaderChapterSourceParser.parse(0, "",
+            io.legado.app.help.book.MixedContentSegments.paragraphs(appearance.content, "", false),
+            false, true, localPresentation = appearance)
+        val readerColor = 0xFFADADAD.toInt()
+        val black = 0xFF000000.toInt()
+        val measured = ReaderChapterBlockMeasurer(shaper, shaper, { null })
+            .measure(source, style.copy(
+                bodyIndentCharacters = 0,
+                bodyStyle = style.bodyStyle.copy(colorArgb = readerColor),
+                styleRanges = listOf(ReaderStyleRange(5, 6, ReaderStyleTarget.BODY, ReaderCharacterStyle(colorArgb = black))),
+            )) as ReaderChapterMeasureResult.Success
+        val pages = ReaderPaginator.paginateBlocks(measured.blocks, ReaderPaginationConfig(
+            0, "", 30, 30, 0f, 0f, 0f, 0f, 10f, 8f))
+        val glyphs = pages.flatMap { it.elements }.filterIsInstance<io.legado.app.feature.reader.core.model.ReaderElement.Text>()
+        assertTrue(pages.size > 1)
+        assertEquals("甲乙丙丁戊己庚辛壬癸", glyphs.joinToString("") { it.value })
+        assertEquals((0..9).toList(), glyphs.map { it.chapterPosition })
+        assertEquals(listOf(true, true) + List(8) { false }, glyphs.map { it.style.marked })
+        assertEquals(0xFFFF0000.toInt(), glyphs.first().style.colorArgb)
+        assertEquals(15f, glyphs.first().style.fontSizePx, 0.001f)
+        assertEquals(8f, glyphs[2].style.fontSizePx, 0.001f)
+        assertEquals("#n", glyphs[2].link)
+        val styles = glyphs.map { it.style }.toSet()
+        val nightOverrides = bookForegroundOverrides(styles, Color.Black)
+        assertEquals(readerColor, nightOverrides[glyphs[4].style])
+        assertEquals(black, glyphs[5].style.colorArgb)
+        assertTrue(glyphs[5].style !in nightOverrides)
+        val adjustedNavy = Color(nightOverrides.getValue(glyphs[6].style))
+        assertTrue(adjustedNavy.blue > adjustedNavy.red && adjustedNavy.red == adjustedNavy.green)
+        assertTrue(adjustedNavy.luminance() >= 0.1f)
+        assertTrue(glyphs[7].style !in nightOverrides)
+        assertTrue(bookForegroundOverrides(styles, Color.White).isEmpty())
+        val paleRed = glyphs[6].style.copy(colorArgb = 0xFFFFCCCC.toInt())
+        val adjustedRed = Color(bookForegroundOverrides(setOf(paleRed), Color.White).getValue(paleRed))
+        assertTrue(adjustedRed.red > adjustedRed.green && adjustedRed.green == adjustedRed.blue)
+        assertTrue(adjustedRed.luminance() <= 0.3f)
+        pages.forEach { page ->
+            val rows = page.elements.filterIsInstance<io.legado.app.feature.reader.core.model.ReaderElement.Text>()
+                .groupBy { it.baselinePx }.values.toList()
+            rows.zipWithNext().forEach { (previous, next) ->
+                assertTrue(previous.maxOf { it.bounds.bottom } <= next.minOf { it.bounds.top } + 0.001f)
+            }
+        }
     }
 
     @Test
@@ -770,5 +899,67 @@ class ReaderChapterBlockMeasurerTest {
         assertTrue(items.none { it is ReaderMeasuredInlineItem.Image })
         assertEquals("　　正文", items.filterIsInstance<ReaderMeasuredInlineItem.Text>()
             .joinToString("") { it.value })
+    }
+
+    @Test
+    fun rubyMeasuresMultilingualMultiLineTextWithoutBreakingBaseGroups() = runBlocking {
+        val html = "<p>あ<ruby><rb>植</rb><rt>しよく</rt></ruby><ruby><rb>毛莨</rb><rt>きんぽうげ</rt></ruby>" +
+            "<ruby>重<rp>(</rp><rt>chóng</rt><rp>)</rp></ruby><ruby><rb>read</rb><rt>/riːd.ɪŋ/</rt></ruby></p>"
+        val appearance = checkNotNull(ReaderLocalPresentationResolver.resolve(html))
+        val source = ReaderChapterSourceParser.parse(
+            0, "", MixedContentSegments.paragraphs(appearance.content, "", false),
+            includeTitle = false, adaptSpecialStyle = true, localPresentation = appearance,
+        )
+        assertEquals("あ植毛莨重read\n", source.semanticContent)
+
+        val proportionalShaper = ReaderTextShaperFactory { textStyle ->
+            object : ReaderTextShaper {
+                override fun shape(text: String) = GlyphClusters(
+                    text.map(Char::toString),
+                    FloatArray(text.length) { textStyle.fontSizePx },
+                )
+                override val fontLineMetrics = ReaderFontLineMetrics(
+                    heightPx = textStyle.fontSizePx * 1.2f,
+                    baselineOffsetPx = textStyle.fontSizePx,
+                    ascentPx = textStyle.fontSizePx * 0.8f,
+                    descentPx = textStyle.fontSizePx * 0.2f,
+                )
+            }
+        }
+        val baseTextStyle = style.bodyStyle.copy(fontSizePx = 20f)
+        val bodyShaper = proportionalShaper.create(baseTextStyle)
+        val measured = ReaderChapterBlockMeasurer(
+            bodyShaper, bodyShaper, { null }, textShaperFactory = proportionalShaper,
+        ).measure(
+            source,
+            style.copy(bodyStyle = baseTextStyle, bodyIndentCharacters = 0, bodyLineHeightPx = 24f, bodyBaselineOffsetPx = 20f),
+        ) as ReaderChapterMeasureResult.Success
+
+        // Multi-line pagination (width 100px):
+        // Line 1: "あ"(20) + "植"[しよく](30) + "毛莨"[きんぽうげ](50) = 100px
+        // Line 2: "重"[chóng](50px; "read"[/riːd.ɪŋ/] is 90px so it wraps as a whole word to Line 3)
+        // Line 3: "read"[/riːd.ɪŋ/](90px; letters r,e,a,d stay contiguous in the center [5..85])
+        val page = ReaderPaginator.paginateBlocks(
+            measured.blocks,
+            ReaderPaginationConfig(0, "", 100, 500, 0f, 0f, 0f, 0f, 24f, 20f),
+        ).single()
+        val elements = page.elements.filterIsInstance<ReaderElement.Text>()
+        assertEquals(listOf("あ", "植", "毛", "莨", "重", "r", "e", "a", "d"), elements.map { it.value })
+        assertEquals(listOf(null, "しよく", "きんぽうげ", null, "chóng", "/riːd.ɪŋ/", null, null, null), elements.map { it.rubyText })
+        // 分页器必须把整个组的 group id 带到绘制元素；否则组末会被当成普通字并进 merged run。
+        assertEquals(listOf(0, 1, 2, 2, 3, 4, 4, 4, 4), elements.map { it.rubyGroupId })
+        assertEquals(elements[2].bounds.top, elements[3].bounds.top, 0.01f)
+        assertTrue(elements[4].bounds.top > elements[2].bounds.top)
+        assertTrue(elements[5].bounds.top > elements[4].bounds.top)
+        assertEquals(elements[5].bounds.top, elements[8].bounds.top, 0.01f)
+        // Multi-char base ("read", 80px) widened by IPA ruby ("/riːd.ɪŋ/", 90px) pads outer edges by 5px
+        // so internal letters ('r'..'d') remain contiguous without artificial gaps.
+        assertEquals(5f, elements[5].glyphOffsetX, 0.01f)
+        assertEquals(0f, elements[6].glyphOffsetX, 0.01f)
+        assertEquals((elements[5].bounds.left + elements[8].bounds.right) / 2f, elements[5].rubyCenterX, 0.01f)
+        // 注音只挂组首（植 / 毛莨 / 重 / read 共 4 组），胶囊或换行拆出的续段不重复持有。
+        assertEquals(4, measured.blocks.filterIsInstance<ReaderMeasuredBlock.InlineParagraph>()
+            .flatMap { it.items }.filterIsInstance<ReaderMeasuredInlineItem.Text>()
+            .count { it.rubyText != null })
     }
 }

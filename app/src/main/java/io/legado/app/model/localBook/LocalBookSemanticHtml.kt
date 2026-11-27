@@ -8,6 +8,7 @@ import io.legado.app.utils.HtmlFormatter
 import io.legado.app.utils.encodeURI
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
+import org.jsoup.parser.Parser
 import org.jsoup.select.Elements
 import java.net.URI
 import java.net.URLDecoder
@@ -20,12 +21,34 @@ import java.net.URLDecoder
  */
 object LocalBookSemanticHtml {
 
+    /**
+     * Ruby 结构标签之间的缩进只是排版空白，不是基字内容。Jsoup 序列化 `<rbc>/<rtc>` 时也会
+     * 插入换行；如果留给 [HtmlFormatter]，这些空白会变成正文换行，把多字基字拆成多个段落。
+     */
+    private val rubyTagWhitespaceRegex = Regex(
+        "(?is)(<ruby\\b[^>]*>|</?(?:rb|rt|rp|rbc|rtc)\\b[^>]*>)\\s+" +
+            "(?=</?(?:rb|rt|rp|rbc|rtc)\\b|</ruby>)"
+    )
+
     /** The pre-rich-channel local-book transport. Decoding happens once at this boundary. */
     fun plainText(html: String, decodeEntities: Boolean = true): String {
         return plainTextMapped(html, decodeEntities, null)
     }
 
     internal fun plainTextMapped(html: String, decodeEntities: Boolean, projection: TextProjection?): String {
+        val normalized = html.replaceMapped(rubyTagWhitespaceRegex, "\$1", projection)
+        val stripped = stripRubyAnnotations(normalized, projection)
+        return formatTransport(stripped, decodeEntities, projection)
+    }
+
+    /** Only upgrade a cache that exactly matches the extraction used before Ruby support. */
+    internal fun upgradeCachedRubyText(html: String, cached: String, decodeEntities: Boolean = true): String {
+        val current = plainText(html, decodeEntities)
+        if (current == cached) return cached
+        return if (formatTransport(html, decodeEntities, null) == cached) current else cached
+    }
+
+    private fun formatTransport(html: String, decodeEntities: Boolean, projection: TextProjection?): String {
         val text = HtmlFormatter.formatKeepImgMapped(html, projection = projection)
         return if (decodeEntities) text.replaceMapped("&lt;img", "&lt; img", projection, ignoreCase = true)
             .unescapeHtml4Mapped(projection) else text
@@ -33,17 +56,66 @@ object LocalBookSemanticHtml {
                 .replaceMapped(Regex("<!DOCTYPE[^>]*>"), "", projection)
     }
 
+    /**
+     * Canonical text never contains ruby annotations. Only explicitly closed <rt>/<rp>
+     * elements are removed; malformed markup stays untouched so surrounding text cannot be
+     * swallowed by a mismatched or unclosed annotation tag.
+     */
+    private fun stripRubyAnnotations(html: String, projection: TextProjection?): String {
+        if (!html.contains("<rt", ignoreCase = true) && !html.contains("<rp", ignoreCase = true)) {
+            return html
+        }
+        val document = Parser.htmlParser().setTrackPosition(true).parseInput(html, "")
+        val ranges = document.body().select("rt, rp").mapNotNull { element ->
+            val startRange = element.sourceRange()
+            val endRange = element.endSourceRange()
+            if (!startRange.isTracked || !endRange.isTracked) return@mapNotNull null
+            val start = startRange.start().pos()
+            val end = endRange.end().pos()
+            if (start !in 0..html.length || end !in start..html.length) return@mapNotNull null
+            val name = element.normalName()
+            val raw = html.substring(start, end)
+            if (!raw.startsWith("<$name", ignoreCase = true) ||
+                !raw.trimEnd().endsWith("</$name>", ignoreCase = true)
+            ) return@mapNotNull null
+            start to end
+        }.sortedBy { it.first }
+        if (ranges.isEmpty()) return html
+
+        val nonOverlapping = mutableListOf<Pair<Int, Int>>()
+        for (range in ranges) {
+            val previous = nonOverlapping.lastOrNull()
+            if (previous == null || range.first >= previous.second) nonOverlapping += range
+        }
+        if (nonOverlapping.isEmpty()) return html
+
+        projection?.replace(nonOverlapping.map { (start, end) -> TextProjection.Edit(start, end, 0) })
+
+        return buildString(html.length - nonOverlapping.sumOf { (start, end) -> end - start }) {
+            var cursor = 0
+            for ((start, end) in nonOverlapping) {
+                append(html, cursor, start)
+                cursor = end
+            }
+            append(html, cursor, html.length)
+        }
+    }
+
     private val allowedImgAttrs = setOf("src", "alt", "width", "height", "class", "style")
 
-    private val allowedCssProps = setOf("text-align", "font-weight", "font-style", "text-decoration")
+    private val imageSizeProps = setOf("width", "height")
+    private val allowedCssProps = setOf("text-align", "font-weight", "font-style", "text-decoration", "color", "font-size") + imageSizeProps
+
+    data class CssSpecificity(val ids: Int, val classes: Int, val tags: Int)
 
     data class CssRule(
         val tag: String?,
         val id: String?,
         val classes: Set<String>,
         val declarations: Map<String, String>,
-        val specificity: Int,
-        val order: Int
+        val specificity: CssSpecificity,
+        val order: Int,
+        val ancestors: List<Triple<String?, String?, Set<String>>> = emptyList(),
     )
 
     /**
@@ -141,7 +213,7 @@ object LocalBookSemanticHtml {
         }
     }
 
-    /** Parse simple selectors (tag, #id, .class, tag.class) with whitelisted props. */
+    /** Parse simple selectors and descendant chains with whitelisted props. */
     fun parseCssRules(cssText: String, baseOrder: Int = 0, maxRules: Int = Int.MAX_VALUE): List<CssRule> {
         if (maxRules <= 0) return emptyList()
         return runCatching {
@@ -159,16 +231,22 @@ object LocalBookSemanticHtml {
                 for (rawSelector in selectorGroup.split(",")) {
                     val selector = rawSelector.trim()
                     if (selector.isEmpty()) continue
-                    if (selector.contains(" ") || selector.contains(">") ||
+                    if (selector.contains(">") ||
                         selector.contains("+") || selector.contains("~") ||
                         selector.contains("[") || selector.contains(":")
                     ) {
                         continue
                     }
-                    val (tag, id, classes) = parseSimpleSelector(selector) ?: continue
-                    val specificity = (if (id != null) 100 else 0) +
-                        classes.size * 10 + (if (tag != null) 1 else 0)
-                    rules += CssRule(tag, id, classes, declarations, specificity, order++)
+                    val parts = selector.split(Regex("\\s+")).map { parseSimpleSelector(it) }
+                    if (parts.any { it == null }) continue
+                    val parsed = parts.filterNotNull()
+                    val (tag, id, classes) = parsed.last()
+                    val specificity = CssSpecificity(
+                        ids = parsed.count { it.second != null },
+                        classes = parsed.sumOf { it.third.size },
+                        tags = parsed.count { it.first != null },
+                    )
+                    rules += CssRule(tag, id, classes, declarations, specificity, order++, parsed.dropLast(1))
                     if (rules.size >= maxRules) break@blocks
                 }
             }
@@ -263,6 +341,9 @@ object LocalBookSemanticHtml {
             }
         }
         val candidates = mutableListOf<CssRule>()
+        val cascadeOrder = compareBy<CssRule>(
+            { it.specificity.ids }, { it.specificity.classes }, { it.specificity.tags }, { it.order },
+        )
         for (el in docBody.allElements) {
             // Preserve the legacy inline-hidden flag until chapter boundaries have been used.
             if (el.attr("style").contains("display:none", ignoreCase = true)) continue
@@ -277,19 +358,40 @@ object LocalBookSemanticHtml {
             val matched = candidates.filter { rule ->
                 (rule.tag == null || rule.tag == tag) &&
                     (rule.id == null || rule.id == id) &&
-                    (rule.classes.isEmpty() || classes.containsAll(rule.classes))
-            }.sortedWith(compareBy({ it.specificity }, { it.order }))
+                    (rule.classes.isEmpty() || classes.containsAll(rule.classes)) &&
+                    matchesAncestors(el, rule.ancestors)
+            }.sortedWith(cascadeOrder)
             if (matched.isEmpty()) continue
+            val supportsImageSize = tag == "img" || tag == "image"
             val merged = mutableMapOf<String, String>()
             for ((_, _, _, declarations) in matched) {
-                for ((k, v) in declarations) merged[k] = v
+                for ((k, v) in declarations) {
+                    if (supportsImageSize || k !in imageSizeProps) merged[k] = v
+                }
             }
-            val inline = parseDeclarations(el.attr("style"))
-            for ((k, v) in inline) merged[k] = v
             if (merged.isEmpty()) continue
+            val inline = parseDeclarations(el.attr("style"))
+            for ((k, v) in inline) {
+                if (supportsImageSize || k !in imageSizeProps) merged[k] = v
+            }
             el.attr("style", merged.entries.joinToString("; ") { "${it.key}: ${it.value}" })
         }
         normalizeLegacyAlignment(docBody)
+    }
+
+    private fun matchesAncestors(element: Element, selectors: List<Triple<String?, String?, Set<String>>>): Boolean {
+        if (selectors.isEmpty()) return true
+        var parent = element.parent()
+        for ((tag, id, classes) in selectors.asReversed()) {
+            while (parent != null && !((tag == null || parent.normalName() == tag) &&
+                    (id == null || parent.id().equals(id, true)) &&
+                    (classes.isEmpty() || parent.classNames().map { it.lowercase() }.containsAll(classes)))) {
+                parent = parent.parent()
+            }
+            if (parent == null) return false
+            parent = parent.parent()
+        }
+        return true
     }
 
     private val blockAlignTags = setOf(

@@ -48,21 +48,33 @@ object ThemeEngine {
         forceOpaque: Boolean = false,
         customSeedColor: Int? = null,
         customContrast: String? = null,
+        composeEngine: ComposeEngine = ComposeEngine.Material,
+        /** Oxygen 默认系列 / COUI 的 Dynamic 内置预设；关闭此标记后按 mode 正常解析。 */
+        useBuiltInPalette: Boolean = false,
     ): ColorScheme {
         val resolvedMode = resolveMode(mode = mode, forceOpaque = forceOpaque)
-        val baseColorScheme = resolveBaseColorScheme(
-            context = context,
-            mode = resolvedMode,
-            darkTheme = darkTheme,
-            paletteStyle = paletteStyle,
-            materialVersion = materialVersion,
-            customSeedColor = customSeedColor,
-            customContrast = customContrast,
-        )
+        val useOxygenDefaults = composeEngine == ComposeEngine.Oxygen && useBuiltInPalette
+        val baseColorScheme = if (useOxygenDefaults) {
+            oxygenDefaultColorScheme(darkTheme)
+        } else if (
+            composeEngine == ComposeEngine.Coui && useBuiltInPalette &&
+            resolvedMode == AppThemeMode.Dynamic && ThemeResolver.isCouiSupported()
+        ) {
+            couiDefaultColorScheme(darkTheme)
+        } else {
+            resolveBaseColorScheme(
+                context = context,
+                mode = resolvedMode,
+                darkTheme = darkTheme,
+                paletteStyle = paletteStyle,
+                materialVersion = materialVersion,
+                customSeedColor = customSeedColor,
+                customContrast = customContrast,
+            )
+        }
 
-        return baseColorScheme
-            .applyAmoledIfNeeded(darkTheme = darkTheme, isAmoled = isAmoled)
-            .applyTransparentIfNeeded(mode = resolvedMode, forceOpaque = forceOpaque)
+        val colors = baseColorScheme.applyAmoledIfNeeded(darkTheme = darkTheme, isAmoled = isAmoled)
+        return if (useOxygenDefaults) colors else colors.applyTransparentIfNeeded(mode = resolvedMode, forceOpaque = forceOpaque)
     }
 
     private fun resolveMode(

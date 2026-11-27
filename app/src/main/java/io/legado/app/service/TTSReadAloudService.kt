@@ -13,6 +13,7 @@ import io.legado.app.R
 import io.legado.app.constant.AppConst
 import io.legado.app.constant.AppLog
 import io.legado.app.constant.IntentAction
+import io.legado.app.data.entities.VoiceEffectPreset
 import io.legado.app.domain.gateway.ReadAloudSettingsGateway
 import io.legado.app.domain.model.readaloud.ReadAloudPlaybackCursor
 import io.legado.app.domain.model.readaloud.ReadAloudVoice
@@ -55,6 +56,9 @@ class TTSReadAloudService : BaseReadAloudService(), KoinComponent {
     private val pendingUtterances = mutableMapOf<String, CastMarkers.Spoken>()
 
     protected override val currentSpeechRate: Float
+        // 跟随系统时引擎按系统设置的 TTS 默认速率播，这里仍报 1f：
+        // 没有公开 API 能读引擎默认速率，媒体通知的进度/时长估算按 1× 折算是已知偏差，
+        // 偏差随系统语速线性放大（见 BaseReadAloudService 的 mediaProgressPositionMs / seekToMediaPosition）
         get() = if (ReadConfig.ttsFollowSys) 1f else (speechRateSetting + 5) / 10f
 
     private val readAloudSettingsGateway: ReadAloudSettingsGateway by inject()
@@ -63,9 +67,12 @@ class TTSReadAloudService : BaseReadAloudService(), KoinComponent {
 
     private var textToSpeech: TextToSpeech? = null
     private var ttsInitFinish = false
+    private var playAfterTtsInit = false
     private val ttsCallbackHandler = Handler(Looper.getMainLooper())
     private val ttsUtteranceListener = TTSUtteranceListener()
     private var speakJob: Coroutine<*>? = null
+    private var serialPlayback = false
+    private var retriedSubmission: ReadAloudPlaybackCursor? = null
     private var utteranceStartPos = 0
     private var utteranceStartReadAloudNumber = 0
 
@@ -164,6 +171,7 @@ class TTSReadAloudService : BaseReadAloudService(), KoinComponent {
         }
         textToSpeech = null
         ttsInitFinish = false
+        playAfterTtsInit = false
         activeVoiceName = ""
         voiceIsDefault = true
         voiceCatalogCache = null
@@ -202,15 +210,18 @@ class TTSReadAloudService : BaseReadAloudService(), KoinComponent {
                 upSpeechRate(reset = false)
                 // 先把音色表取回来：否则第一处「旁白→角色」的边界要现场等一次全量枚举
                 execute { voiceCatalog() }
-                play()
+                if (playAfterTtsInit) play()
             }
         } else {
             toastOnUi(R.string.tts_init_failed)
+            if (playAfterTtsInit) pauseReadAloud()
+            clearTTS()
         }
     }
 
     @Synchronized
     override fun play() {
+        if (!canStartPreparedPlayback) return
         // 上一句自然播完、这里接下一句 —— 只有这一种情况可以让引擎自己接力
         val continuesCurrentSpeech = advancedFromUtteranceDone
         advancedFromUtteranceDone = false
@@ -220,14 +231,29 @@ class TTSReadAloudService : BaseReadAloudService(), KoinComponent {
             val requiredEngine = route.engineId
             if (requiredEngine != activeEngine || textToSpeech == null) {
                 clearTTS()
+                playAfterTtsInit = true
                 initTts(requiredEngine)
+                return
+            }
+            // 之前下发过角色语速、这一句起要跟随系统：引擎默认速率拿不回来，
+            // 只能重建引擎恢复，宁可在这个边界留一次可闻空档
+            if (needsEngineRateReset(nowSpeak, route)) {
+                AppLog.put("跟随系统语速，重建 TTS 引擎以清除残留的角色语速覆盖")
+                clearTTS()
+                playAfterTtsInit = true
+                initTts()
                 return
             }
             // 换音色与改语速挪到 speakJob 里：那里先等引擎把上一句缓冲的音频放完，
             // 否则这两次调用打在还在播的那一句上，听着就是突然加速然后跳下一句
             nextRoute = route
         }
-        if (!ttsInitFinish) return
+        if (!ttsInitFinish) {
+            playAfterTtsInit = true
+            if (textToSpeech == null) initTts()
+            return
+        }
+        playAfterTtsInit = false
         val tts = textToSpeech ?: return
         if (!requestFocus()) return
         if (contentList.isEmpty()) {
@@ -236,7 +262,7 @@ class TTSReadAloudService : BaseReadAloudService(), KoinComponent {
             return
         }
         super.play()
-        if (!hasSpeechPlaybackQueue || !continuesCurrentSpeech) {
+        if (!continuesCurrentSpeech) {
             // 起播、暂停后恢复、换章这几路要放这声无声垫音（服务在 onCreate 里就把 isRun
             // 置真，不能按「是否已在播放」判断）；逐句接力不每句新建 MediaPlayer 抢音频轨，
             // 免得抢轨的停顿加在切换边界上
@@ -250,11 +276,14 @@ class TTSReadAloudService : BaseReadAloudService(), KoinComponent {
         val session = ++speakSession
         speakJob?.cancel()
         resetSpeechTracking()
+        val interval = ReadConfig.ttsParagraphInterval.toLong()
+        // 章节批量入队无法在同一段内等上一片完成，超长段留给逐段路径处理。
+        serialPlayback = interval > 0 ||
+            (!hasSpeechPlaybackQueue && contentList.any { it.length > TextToSpeech.getMaxSpeechInputLength() })
         speakJob = execute {
-            val interval = ReadConfig.ttsParagraphInterval.toLong()
             AppLog.putDebug("TTS_PLAY: nowSpeak=$nowSpeak, isDelay=$isDelay, interval=$interval")
             
-            if (hasSpeechPlaybackQueue || interval > 0) {
+            if (hasSpeechPlaybackQueue || serialPlayback) {
                 // 段落间隔模式：单段播放
                 if (isDelay) {
                     AppLog.putDebug("TTS开始延迟: $interval 毫秒")
@@ -296,20 +325,26 @@ class TTSReadAloudService : BaseReadAloudService(), KoinComponent {
         }
         // 偏移用完才去掉标记：这一句要么干净正文，要么带着 <<角色（池）>> 交给认标签的引擎
         val utteranceId = ttsUtteranceId(AppConst.APP_TAG, session, nowSpeak)
-        val spoken = speakable(storedTail, utteranceId, storedStart, readAloudNumber)
-        if (spoken.text.isBlank()) {
-            AppLog.putDebug("TTS段落全标点跳过: nowSpeak=$nowSpeak")
+        val spoken = speakable(storedTail, utteranceId, storedStart, readAloudNumber, limitLength = true)
+        if (spoken.text.isBlankReadAloudUnit()) {
+            AppLog.putDebug("TTS段落无可念字符跳过: nowSpeak=$nowSpeak")
             pendingUtterances.remove(utteranceId)
-            speechProgress.remove(utteranceId)
-            skipCurrentCue()
+            val nextChunkOffset = speechProgress.remove(utteranceId)?.nextChunkOffset
+            postTtsCallback {
+                if (session != speakSession || pause) return@postTtsCallback
+                if (nextChunkOffset == null) {
+                    skipCurrentCue()
+                } else {
+                    paragraphStartPos = nextChunkOffset
+                    play()
+                }
+            }
             return
         }
         // 第三条音轨：这一单元身上挂了音效（正则角色「命中不念改放音频」）就一起响
         playCueSounds(nowSpeak)
         AppLog.putDebug("TTS开始Speak: ${spoken.text}")
-        val queueMode = if (hasSpeechPlaybackQueue
-            && continuesCurrentSpeech && paragraphStartPos == 0 && !isDelay
-        ) {
+        val queueMode = if (continuesCurrentSpeech && !isDelay) {
             // 接上一句一律排队，不冲刷。引擎是「整句合成好才报 onDone」的，回调比耳朵
             // 听到的出声早好几秒（约 5 秒），这时 QUEUE_FLUSH 会把还没播出去的尾巴直接
             // 丢掉，角色长句会读到一半跳下一句。换音色不需要冲刷：音色是送给引擎合成
@@ -330,14 +365,13 @@ class TTSReadAloudService : BaseReadAloudService(), KoinComponent {
             TextToSpeech.ERROR
         }
         if (result == TextToSpeech.ERROR) {
-            AppLog.put("tts出错 尝试重新初始化")
-            clearTTS()
-            initTts()
+            retrySubmission()
             return
         }
+        retriedSubmission = null
         // 这一句已经在引擎里，接着把后面「音色语速都没变」的句子预取进去：
         // 光等 onDone 再送下一句，每段都要先等引擎放空再冷启动合成，听起来就是段间一顿
-        fillSpeechWindow(session)
+        if (speechProgress[utteranceId]?.nextChunkOffset == null) fillSpeechWindow(session)
         LogUtils.d(TAG, "朗读内容添加完成")
     }
 
@@ -356,7 +390,7 @@ class TTSReadAloudService : BaseReadAloudService(), KoinComponent {
                 val storedTail = paragraphs[i].substring(storedStart)
                 val utteranceId = ttsUtteranceId(AppConst.APP_TAG, session, i)
                 val text = speakable(storedTail, utteranceId, storedStart).text
-                if (text.isBlank()) {
+                if (text.isBlankReadAloudUnit()) {
                     pendingUtterances.remove(utteranceId)
                     speechProgress.remove(utteranceId)
                     return@synchronized
@@ -370,12 +404,12 @@ class TTSReadAloudService : BaseReadAloudService(), KoinComponent {
                 }
                 if (result == TextToSpeech.ERROR) {
                     if (!isAddedText) {
-                        AppLog.put("tts出错 尝试重新初始化")
-                        clearTTS()
-                        initTts()
+                        retrySubmission()
                         return
                     }
                     AppLog.put("tts朗读出错:$text")
+                } else {
+                    retriedSubmission = null
                 }
                 isAddedText = true
             }
@@ -388,9 +422,29 @@ class TTSReadAloudService : BaseReadAloudService(), KoinComponent {
             tts.runCatching { stop() }
         }
         delay(1000)
-        synchronized(this) {
+        postTtsCallback {
             if (session == speakSession && !pause) completeCurrentChapter()
         }
+    }
+
+    private fun retrySubmission() {
+        val cursor = ReadAloudPlaybackCursor(nowSpeak, paragraphStartPos)
+        if (retriedSubmission == cursor) {
+            val session = ++speakSession
+            resetSpeechTracking()
+            postTtsCallback {
+                if (session == speakSession && !pause) {
+                    AppLog.put("系统朗读重新初始化后仍无法提交当前文本，已暂停朗读", toast = true)
+                    pauseReadAloud()
+                }
+            }
+            return
+        }
+        retriedSubmission = cursor
+        val engine = activeEngine
+        clearTTS()
+        playAfterTtsInit = true
+        initTts(engine)
     }
 
     /**
@@ -404,15 +458,31 @@ class TTSReadAloudService : BaseReadAloudService(), KoinComponent {
         utteranceId: String,
         base: Int,
         startReadAloudNumber: Int = 0,
+        limitLength: Boolean = false,
     ): CastMarkers.Spoken {
         // 一次入队整章时表会跟着涨，引擎不再回调的条目没人清理，换会话就整体作废
         if (pendingUtterances.size > MAX_PENDING_UTTERANCES) {
             pendingUtterances.clear()
             speechProgress.clear()
         }
-        val spoken = spokenFor(storedTail, base)
+        val full = spokenFor(storedTail, base)
+        val limit = TextToSpeech.getMaxSpeechInputLength()
+        var nextChunkOffset: Int? = null
+        val spoken = if (limitLength && full.text.length > limit) {
+            // 先转换为实际发声文本再切片，切点避开代理对，并映射回原段坐标。
+            val end = if (full.text[limit].isLowSurrogate() && full.text[limit - 1].isHighSurrogate()) {
+                limit - 1
+            } else {
+                limit
+            }
+            val storedEnd = full.storedOf(end)
+            nextChunkOffset = storedEnd
+            CastMarkers.Spoken(full.text.substring(0, end), storedEnd, full::storedOf)
+        } else {
+            full
+        }
         pendingUtterances[utteranceId] = spoken
-        speechProgress[utteranceId] = SpeechProgress(base, startReadAloudNumber)
+        speechProgress[utteranceId] = SpeechProgress(base, startReadAloudNumber, nextChunkOffset)
         return spoken
     }
 
@@ -426,7 +496,7 @@ class TTSReadAloudService : BaseReadAloudService(), KoinComponent {
         respeakTries = 0
         if (advanced &&
             !pause &&
-            (hasSpeechPlaybackQueue || ReadConfig.ttsParagraphInterval > 0)
+            (hasSpeechPlaybackQueue || serialPlayback)
         ) {
             needParagraphInterval = ReadConfig.ttsParagraphInterval > 0
             advancedFromUtteranceDone = true
@@ -492,7 +562,8 @@ class TTSReadAloudService : BaseReadAloudService(), KoinComponent {
         return CueSpeechState(
             engineId = voice.engineId,
             voiceName = voice.speakerId,
-            rate = rate,
+            // null = 跟随系统（未显式覆盖引擎语速），与 appliedSpeechRate 的 -1f 哨兵对齐
+            rate = rate ?: -1f,
             pitch = pitch,
         )
     }
@@ -524,10 +595,12 @@ class TTSReadAloudService : BaseReadAloudService(), KoinComponent {
                 base = 0,
                 startReadAloudNumber = playbackQueue.cues[cue].chapterStart,
             )
-            if (spoken.text.isBlank()) {
+            if (spoken.text.isBlankReadAloudUnit() ||
+                spoken.text.length > TextToSpeech.getMaxSpeechInputLength()
+            ) {
                 pendingUtterances.remove(utteranceId)
                 speechProgress.remove(utteranceId)
-                // 留给串行路径推进空句，窗口不能越过游标尚未处理的空档。
+                // 空句和需要切片的长句留给串行路径，预取不能越过它们。
                 break
             }
             speechWindow.add(cue)
@@ -629,20 +702,26 @@ class TTSReadAloudService : BaseReadAloudService(), KoinComponent {
     }
 
     /** 这一句要的语速/音高：角色自带预设优先，其余落到全局语速与变声器。 */
-    private fun presetForCue(index: Int, voice: ReadAloudVoice): Pair<Float, Float> {
+    private fun presetForCue(index: Int, voice: ReadAloudVoice): Pair<Float?, Float> {
         val config = runCatching {
             GSON.fromJson(voice.traitsJson, SystemTtsVoiceConfig::class.java)
         }.getOrNull() ?: SystemTtsVoiceConfig()
-        val globalRate = if (ReadConfig.ttsFollowSys) {
-            1f
-        } else {
-            (speechRateSetting + 5) / 10f
-        }
         // 角色的变声器：直读路径没有自己的播放器，只能用引擎的音高/语速这一层
         val cue = playbackQueue.cues.getOrNull(index)
         val effect = VoiceEffectStore.ofSpeech(cue?.voiceEffect, cue?.characterId)
-        return VoiceEffectAudio.speedOf(effect, config.speechRate ?: globalRate) to
-            VoiceEffectAudio.pitchOf(effect, config.pitch ?: 1f)
+        return cueSpeechPreset(
+            followSys = ReadConfig.ttsFollowSys,
+            characterRate = config.speechRate,
+            characterPitch = config.pitch,
+            speechRateSetting = speechRateSetting,
+            effect = effect,
+        ).let { it.rate to it.pitch }
+    }
+
+    /** 这一句要「不下发语速」（跟随系统），但引擎上还挂着之前下发的语速 → 只能重建引擎恢复默认。 */
+    private fun needsEngineRateReset(index: Int, voice: ReadAloudVoice): Boolean {
+        val (rate, _) = presetForCue(index, voice)
+        return rate == null && appliedSpeechRate != -1f
     }
 
     private fun applyPreset(voice: ReadAloudVoice) {
@@ -658,8 +737,13 @@ class TTSReadAloudService : BaseReadAloudService(), KoinComponent {
         }
         val (rate, pitch) = presetForCue(nowSpeak, voice)
         val tts = textToSpeech ?: return
-        // 同一角色的连续两句算出的是同一个值，就别再发两次 binder 调用堆在切换边界上
-        if (rate != appliedSpeechRate) {
+        if (rate == null && effect?.speed?.let { it != 1f } == true) {
+            // 跟随系统 = 不下发引擎语速，变声器的速度倍率随之一起丢；混响那层挂不上有对称的日志
+            AppLog.put("跟随系统语速时变声器「${effect.name}」的速度档不生效，只有音高生效")
+        }
+        // 同一角色的连续两句算出的是同一个值，就别再发两次 binder 调用堆在切换边界上；
+        // rate 为 null 表示跟随系统，绝不能显式下发，否则会覆盖引擎的系统语速默认值
+        if (rate != null && rate != appliedSpeechRate) {
             appliedSpeechRate = rate
             tts.setSpeechRate(rate)
         }
@@ -671,10 +755,15 @@ class TTSReadAloudService : BaseReadAloudService(), KoinComponent {
 
     private fun applyDefaultPreset() {
         val tts = textToSpeech ?: return
-        val rate = if (ReadConfig.ttsFollowSys) 1f else (speechRateSetting + 5) / 10f
-        if (rate != appliedSpeechRate) {
-            appliedSpeechRate = rate
-            tts.setSpeechRate(rate)
+        // 跟随系统时不调用 setSpeechRate：引擎默认速率就是系统设置里的 TTS 语速，
+        // 显式下发 1f 会把系统滑杆的设置覆盖掉。若之前下发过自定义语速，
+        // 切换开关会经 upSpeechRate(reset=true) 重建引擎来恢复默认。
+        if (!ReadConfig.ttsFollowSys) {
+            val rate = (speechRateSetting + 5) / 10f
+            if (rate != appliedSpeechRate) {
+                appliedSpeechRate = rate
+                tts.setSpeechRate(rate)
+            }
         }
         if (appliedPitch != 1f) {
             appliedPitch = 1f
@@ -687,6 +776,8 @@ class TTSReadAloudService : BaseReadAloudService(), KoinComponent {
         speakSession++
         speakJob?.cancel()
         needParagraphInterval = false
+        playAfterTtsInit = false
+        retriedSubmission = null
         resetSpeechTracking()
         textToSpeech?.runCatching {
             stop()
@@ -700,7 +791,9 @@ class TTSReadAloudService : BaseReadAloudService(), KoinComponent {
     override fun upSpeechRate(reset: Boolean) {
         if (ReadConfig.ttsFollowSys) {
             if (reset) {
+                val shouldPlay = !pause && canStartPreparedPlayback
                 clearTTS()
+                playAfterTtsInit = shouldPlay
                 initTts()
             }
         } else {
@@ -728,6 +821,7 @@ class TTSReadAloudService : BaseReadAloudService(), KoinComponent {
      */
     @Synchronized
     override fun resumeReadAloud() {
+        if (resumeAfterPreparation()) return
         super.resumeReadAloud()
         play()
     }
@@ -784,7 +878,15 @@ class TTSReadAloudService : BaseReadAloudService(), KoinComponent {
             val cue = liveCueOf(s) ?: return@postTtsCallback
             LogUtils.d(TAG, "onDone utteranceId:$s")
             val spoken = pendingUtterances.remove(s)
+            val nextChunkOffset = speechProgress[s]?.nextChunkOffset
             if (resumeIfCutShort(cue, s, spoken, "引擎提前收尾")) return@postTtsCallback
+            if (nextChunkOffset != null) {
+                paragraphStartPos = nextChunkOffset
+                respeakTries = 0
+                advancedFromUtteranceDone = true
+                play()
+                return@postTtsCallback
+            }
             finishCue(cue, s, "念完")
         }
 
@@ -868,8 +970,8 @@ class TTSReadAloudService : BaseReadAloudService(), KoinComponent {
             // 若此处仍用旧队列 play(), 会把本章最后一段反复重新入队
             if (!advanceOnce(utteranceId, reason)) return
             val paragraphAdvanced = nextParagraph(naturalCompletion = true)
-            if (paragraphAdvanced && !pause && ReadConfig.ttsParagraphInterval > 0) {
-                needParagraphInterval = true
+            if (paragraphAdvanced && !pause && serialPlayback) {
+                needParagraphInterval = ReadConfig.ttsParagraphInterval > 0
                 advancedFromUtteranceDone = true
                 play()
             }
@@ -1016,6 +1118,7 @@ private const val MAX_PENDING_UTTERANCES = 256
 private class SpeechProgress(
     val startPos: Int,
     val startReadAloudNumber: Int,
+    val nextChunkOffset: Int?,
 ) {
     var sawRange = false
 
@@ -1038,5 +1141,32 @@ internal fun currentRangePosition(
  * TTS 回调只回传 utteranceId, 播放会话号必须编码进 id,
  * 否则旧会话(暂停/停止/换章后迟到)的回调无法与当前队列区分
  */
+/** 一句送进引擎前的语速/音高决策结果；[rate] 为 null 表示跟随系统，绝不能显式 setSpeechRate。 */
+internal data class CueSpeechPreset(
+    val rate: Float?,
+    val pitch: Float,
+)
+
+/**
+ * 这一句的语速/音高：角色显式配置优先，否则落到全局语速（跟随系统时为 null = 不下发）。
+ * 纯函数：入参覆盖 followSys × 角色有无 speechRate × 变声器预设，组合语义见 CueSpeechPresetTest。
+ */
+internal fun cueSpeechPreset(
+    followSys: Boolean,
+    characterRate: Float?,
+    characterPitch: Float?,
+    speechRateSetting: Int,
+    effect: VoiceEffectPreset?,
+): CueSpeechPreset {
+    // 跟随系统时全局语速为 null：引擎默认速率就是系统设置里的 TTS 语速，
+    // 显式 setSpeechRate（哪怕 1f）会把它覆盖掉
+    val globalRate = if (followSys) null else (speechRateSetting + 5) / 10f
+    val baseRate = characterRate ?: globalRate
+    return CueSpeechPreset(
+        rate = baseRate?.let { VoiceEffectAudio.speedOf(effect, it) },
+        pitch = VoiceEffectAudio.pitchOf(effect, characterPitch ?: 1f),
+    )
+}
+
 internal fun ttsUtteranceId(appTag: String, session: Int, index: Int): String =
     "$appTag$session:$index"

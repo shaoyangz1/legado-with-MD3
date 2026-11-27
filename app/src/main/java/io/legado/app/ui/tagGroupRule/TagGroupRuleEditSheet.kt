@@ -30,9 +30,10 @@ import io.legado.app.data.entities.TagGroupRule
 import io.legado.app.ui.theme.LegadoTheme
 import io.legado.app.ui.widget.components.AppFloatingActionButton
 import io.legado.app.ui.widget.components.AppTextField
-import io.legado.app.ui.widget.components.button.series.MediumTonalButton
-import io.legado.app.ui.widget.components.menuItem.RoundDropdownMenu
-import io.legado.app.ui.widget.components.menuItem.RoundDropdownMenuItem
+import io.legado.app.ui.widget.components.icon.AppIcons
+import io.legado.app.ui.widget.components.modalBottomSheet.SheetAction
+import io.legado.app.ui.widget.components.modalBottomSheet.SheetMenuAction
+import kotlinx.collections.immutable.persistentListOf
 import io.legado.app.ui.widget.components.modalBottomSheet.AppModalBottomSheet
 import kotlinx.coroutines.launch
 
@@ -55,7 +56,6 @@ fun TagGroupRuleEditSheet(
 
     var pattern by remember(show, rule) { mutableStateOf(initial.pattern) }
     var groupName by remember(show, rule) { mutableStateOf(initial.groupName) }
-    var showMenu by remember(show, rule) { mutableStateOf(false) }
 
     fun getCurrentRule(): TagGroupRule {
         return initial.copy(
@@ -70,45 +70,36 @@ fun TagGroupRuleEditSheet(
         } else {
             stringResource(R.string.tag_group_edit_rule)
         },
-        startAction = {
-            MediumTonalButton(
-                onClick = onDismissRequest,
-                icon = Icons.Default.Close,
-                contentDescription = stringResource(R.string.close),
-            )
-        },
-        endAction = {
-            Box {
-                MediumTonalButton(
-                    onClick = { showMenu = true },
-                    icon = Icons.Default.MoreVert,
-                    contentDescription = stringResource(R.string.more_menu)
-                )
-                RoundDropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
-                    RoundDropdownMenuItem(
-                        text = stringResource(R.string.copy_rule),
-                        leadingIcon = { Icon(Icons.AutoMirrored.Filled.NoteAdd, null) },
-                        onClick = {
-                            onCopy(getCurrentRule())
-                            showMenu = false
-                        }
-                    )
-                    RoundDropdownMenuItem(
-                        text = stringResource(R.string.paste_rule),
-                        leadingIcon = { Icon(Icons.Default.ContentPaste, null) },
-                        onClick = {
-                            scope.launch {
-                                onPaste()?.let { pasted ->
-                                    pattern = pasted.pattern
-                                    groupName = pasted.groupName
-                                }
+        startSheetAction = SheetAction(
+            onClick = onDismissRequest,
+            icon = Icons.Default.Close,
+            contentDescription = stringResource(R.string.close),
+        ),
+        endSheetAction = SheetAction(
+            icon = AppIcons.MoreVert,
+            contentDescription = stringResource(R.string.more_menu),
+            menu = persistentListOf(
+                SheetMenuAction(
+                    id = "copy_rule",
+                    label = stringResource(R.string.copy_rule),
+                    icon = Icons.AutoMirrored.Filled.NoteAdd,
+                    onClick = { onCopy(getCurrentRule()) },
+                ),
+                SheetMenuAction(
+                    id = "paste_rule",
+                    label = stringResource(R.string.paste_rule),
+                    icon = Icons.Default.ContentPaste,
+                    onClick = {
+                        scope.launch {
+                            onPaste()?.let { pasted ->
+                                pattern = pasted.pattern
+                                groupName = pasted.groupName
                             }
-                            showMenu = false
                         }
-                    )
-                }
-            }
-        },
+                    },
+                ),
+            ),
+        ),
         show = show,
         onDismissRequest = onDismissRequest
     ) {

@@ -4,6 +4,7 @@ import androidx.compose.runtime.Stable
 import io.legado.app.constant.BookType
 import io.legado.app.data.entities.Book
 import io.legado.app.domain.model.PrivateAccessState
+import io.legado.app.help.book.shouldOpenMangaReader
 import io.legado.app.utils.splitNotBlank
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.toImmutableList
@@ -33,6 +34,10 @@ data class BookShelfItem(
     val intro: String? = null,
     val kind: String? = null,
     val customTag: String? = null,
+    /** 收纳系列名，null 表示未收纳；同一系列的书共享这个值 */
+    val seriesId: String? = null,
+    /** 系列内卷序，仅 [seriesId] 非空时有意义 */
+    val seriesOrder: Int = 0,
     val wordCount: String? = null
 ) {
     fun getDisplayCover() = if (customCoverUrl.isNullOrEmpty()) coverUrl else customCoverUrl
@@ -42,6 +47,9 @@ data class BookShelfItem(
     val isAudio: Boolean get() = (type and BookType.audio) > 0
 
     val isImage: Boolean get() = (type and BookType.image) > 0
+
+    fun shouldOpenMangaReader(showMangaUi: Boolean): Boolean =
+        toLightBook().shouldOpenMangaReader(showMangaUi)
 
     val isVideo: Boolean get() = (type and BookType.video) > 0
 
@@ -132,5 +140,7 @@ fun BookShelfItem.toLightBook() = Book(
     canUpdate = canUpdate,
     wordCount = wordCount,
     kind = kind,
-    customTag = customTag
+    customTag = customTag,
+    seriesId = seriesId,
+    seriesOrder = seriesOrder
 )

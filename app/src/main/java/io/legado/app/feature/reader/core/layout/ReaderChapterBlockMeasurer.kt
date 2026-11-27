@@ -3,6 +3,7 @@ package io.legado.app.feature.reader.core.layout
 import io.legado.app.feature.reader.core.cast.CastMarkers
 import io.legado.app.feature.reader.core.model.ReaderTextStyle
 import io.legado.app.feature.reader.core.source.ReaderChapterInlineSource
+import io.legado.app.feature.reader.core.source.ReaderLocalImagePresentation
 import io.legado.app.feature.reader.core.source.ReaderChapterSource
 import io.legado.app.feature.reader.core.source.ReaderChapterSourceBlock
 import io.legado.app.feature.reader.core.source.ReaderInlineSourceStyle
@@ -34,6 +35,13 @@ data class ReaderHtmlParagraph(
      * 标题、`pre`、引用、列表等块由 HTML 语义自己决定排版，测量时保持原样；
      * 普通 `<p>`/`<div>` 正文段则与纯文本段落共用 [ReaderChapterMeasureStyle.bodyIndentText]。
      * 作者显式写在正文里的缩进字符仍优先（测量时会识别并跳过虚拟缩进）。
+     *
+     * 这个开关只决定「是否补虚拟缩进」，不负责隐藏源文本里的缩进字符：
+     * - 旧 HTML 路径（`AndroidReaderHtmlSourceResolver`）的 items 直接来自解析后的 HTML，
+     *   不含阅读器注入的缩进，因此测量端也不需要 `hideBodyIndent`。
+     * - 纯文本 `ReaderChapterSourceBlock.Paragraph` 的段落文本由 `ContentProcessor` 注入
+     *   `bodyIndentText`，结构块再通过 `hideBodyIndent` 把这段注入前缀按零宽处理，
+     *   字符坐标仍保留给朗读、高亮和选区使用。
      */
     val preserveBodyIndent: Boolean = true,
     val rule: Boolean = false,
@@ -126,6 +134,7 @@ data class ReaderChapterMeasureStyle(
     val imageAvailableWidthPx: Float? = null,
     /** true = 带 click 动作脚本的图片（段评气泡）不参与排版：不产出测量项，也不解析图片尺寸。 */
     val excludeActionImages: Boolean = false,
+    val localImageDensity: Float = 1f,
 )
 
 sealed interface ReaderChapterMeasureResult {
@@ -295,6 +304,7 @@ class ReaderChapterBlockMeasurer(
             var emittedContent = false
             var hasStandaloneImage = false
             var droppedActionImage = false
+            var nextRubyGroupId = 0
             val inline = mutableListOf<ReaderMeasuredInlineItem>()
             fun flushInline(skipBlank: Boolean = false) {
                 if (inline.isEmpty()) return
@@ -341,6 +351,8 @@ class ReaderChapterBlockMeasurer(
                 when (item) {
                     is ReaderChapterInlineSource.Text -> {
                         val htmlStyle = baseStyle.merge(item.style)
+                        val rubyText = item.style.ruby?.takeIf { it.isNotEmpty() }
+                        val inlineStart = inline.size
                         // 多角色分配：按标记切段；无标记时单段，行为与原版一致
                         val castActive = castTracker != null && !isTitle && castFeed
                         val castPieces: List<Pair<String, CastMarkers.Match?>> =
@@ -448,6 +460,59 @@ class ReaderChapterBlockMeasurer(
                             offset += pieceMarker.raw.length
                         }
                         }
+                        if (rubyText != null) {
+                            val textIndices = (inlineStart until inline.size).filter { idx ->
+                                (inline[idx] as? ReaderMeasuredInlineItem.Text)?.let { it.widthPx > 0f } == true
+                            }
+                            if (textIndices.isNotEmpty()) {
+                                val groupId = ++nextRubyGroupId
+                                val rubyFontSizePx = (htmlStyle.fontSizePx * RUBY_FONT_SCALE).coerceAtLeast(1f)
+                                val rubyShaper = shaper(htmlStyle.copy(fontSizePx = rubyFontSizePx))
+                                val rubyShaped = metrics?.shape(rubyShaper, rubyText) ?: rubyShaper.shape(rubyText)
+                                val rubyWidthPx = rubyShaped.widthsPx.sum()
+                                val paraLineHeight = lineHeight ?: baseStyle.fontSizePx
+                                val paraBaseline = baselineOffset ?: baseStyle.fontSizePx
+                                val paraDescent = (paraLineHeight - paraBaseline).coerceAtLeast(0f)
+                                val baseAscentPx = shaper(htmlStyle).fontLineMetrics?.ascentPx ?: (paraBaseline * 0.82f)
+                                val rubyMetrics = rubyShaper.fontLineMetrics
+                                val rubyAscentPx = rubyMetrics?.ascentPx ?: (rubyFontSizePx * 0.85f)
+                                val rubyDescentPx = rubyMetrics?.descentPx ?: (rubyFontSizePx * 0.2f)
+                                val rubyGapPx = rubyFontSizePx * 0.1f
+                                val rubyHeightPx = rubyAscentPx + rubyDescentPx + rubyGapPx
+                                val requiredBaselineOffsetPx = maxOf(paraBaseline, baseAscentPx + rubyHeightPx)
+                                val rubyBaselineDeltaPx = -(baseAscentPx + rubyDescentPx + rubyGapPx)
+                                val baseWidthSum = textIndices.sumOf {
+                                    (inline[it] as ReaderMeasuredInlineItem.Text).widthPx.toDouble()
+                                }.toFloat()
+                                val halfExtra = if (rubyWidthPx > baseWidthSum) {
+                                    (rubyWidthPx - baseWidthSum) / 2f
+                                } else 0f
+                                val firstIdx = textIndices.first()
+                                val lastIdx = textIndices.last()
+                                for (idx in textIndices) {
+                                    val current = inline[idx] as ReaderMeasuredInlineItem.Text
+                                    val currentLineHeight = current.lineHeightPx ?: paraLineHeight
+                                    val currentBaseline = current.baselineOffsetPx ?: paraBaseline
+                                    val currentDescent = (currentLineHeight - currentBaseline).coerceAtLeast(paraDescent)
+                                    val newBaseline = maxOf(currentBaseline, requiredBaselineOffsetPx)
+                                    val newLineHeight = maxOf(currentLineHeight, newBaseline + currentDescent)
+                                    val extraLeft = if (idx == firstIdx) halfExtra else 0f
+                                    val extraRight = if (idx == lastIdx) halfExtra else 0f
+                                    inline[idx] = current.copy(
+                                        widthPx = current.widthPx + extraLeft + extraRight,
+                                        lineHeightPx = newLineHeight,
+                                        baselineOffsetPx = newBaseline,
+                                        glyphOffsetX = extraLeft,
+                                        rubyGroupId = groupId,
+                                        // 注音只挂组首：分页器按连续同 groupId 段落一次注音，
+                                        // 胶囊切开或超宽组跨行后的续段不再重复绘制。
+                                        rubyText = if (idx == firstIdx) rubyText else null,
+                                        rubyFontSizePx = rubyFontSizePx,
+                                        rubyBaselineDeltaPx = rubyBaselineDeltaPx,
+                                    )
+                                }
+                            }
+                        }
                     }
                     is ReaderChapterInlineSource.BgmScene -> {
                         inline += ReaderMeasuredInlineItem.BgmScene(
@@ -472,7 +537,8 @@ class ReaderChapterBlockMeasurer(
                         // loader already supplies an error image; reserve stable line geometry
                         // until real dimensions are available.
                         val placeholderExtent = (lineHeight ?: baseStyle.fontSizePx).coerceAtLeast(1f)
-                        val originalSize = imageDimensionsResolver.resolve(item.source)
+                        val measuredSize = imageDimensionsResolver.resolve(item.source)
+                        val originalSize = measuredSize
                             ?: ReaderImageDimensions(placeholderExtent, placeholderExtent)
                         val requestedWidth = options?.requestedWidthFraction?.let { fraction ->
                             style.imageAvailableWidthPx?.times(fraction)
@@ -480,7 +546,12 @@ class ReaderChapterBlockMeasurer(
                         val size = originalSize.withWidth(requestedWidth)
                         val layout = style.resolveImageLayout(options, fromHtmlBlock)
                         val mode = layout.mode
-                        val standalone = mode != ReaderImageLayoutMode.INLINE && (
+                        val localInlineSize = item.presentation
+                            ?.takeIf { mode == ReaderImageLayoutMode.AUTO && requestedWidth == null }
+                            ?.resolveInlineSize(
+                                originalSize, baseStyle.fontSizePx, style.imageAvailableWidthPx, style.localImageDensity,
+                            )
+                        val standalone = localInlineSize == null && mode != ReaderImageLayoutMode.INLINE && (
                             mode == ReaderImageLayoutMode.STANDALONE ||
                             mode == ReaderImageLayoutMode.FULL_WIDTH ||
                             mode == ReaderImageLayoutMode.SINGLE_PAGE ||
@@ -497,10 +568,12 @@ class ReaderChapterBlockMeasurer(
                                 // 整图也要带动作：书源写在 src 尾随 JSON 里的 click（例如唤起章评）
                                 // 只有解析成功时才有值，消费侧是 `ReadBookController.handleComposeImageClick`。
                                 action = action,
+                                link = item.presentation?.link,
                                 horizontalAlignment = layout.alignment,
                                 scaleMode = mode.toScaleMode(),
                                 pageBreakBefore = mode == ReaderImageLayoutMode.SINGLE_PAGE,
                                 pageBreakAfter = mode == ReaderImageLayoutMode.SINGLE_PAGE,
+                                dimensionsKnown = measuredSize != null,
                             )
                         } else {
                             // 文字嵌入（行内图）：对照旧 `TextChapterLayout` 的 ImageColumn —— 占位宽
@@ -511,10 +584,10 @@ class ReaderChapterBlockMeasurer(
                             // 位图再按最终槽宽栅格化，所以渲染分辨率与排版宽度始终同口径。
                             val inlineWidthScale =
                                 options?.inlineWidthScale?.takeIf { it > 0f } ?: 1f
-                            val cellWidthPx =
+                            val cellWidthPx = localInlineSize?.widthPx ?:
                                 inlinePlaceholderWidth(layout.placeholder, baseStyle) *
                                     inlineWidthScale
-                            val cellHeightPx =
+                            val cellHeightPx = localInlineSize?.heightPx ?:
                                 cellWidthPx * (size.heightPx.coerceAtLeast(1f) /
                                         size.widthPx.coerceAtLeast(1f))
                             inline += ReaderMeasuredInlineItem.Image(
@@ -523,6 +596,8 @@ class ReaderChapterBlockMeasurer(
                                 heightPx = cellHeightPx,
                                 chapterPosition = item.chapterPosition,
                                 action = action,
+                                link = item.presentation?.link,
+                                useMeasuredBounds = localInlineSize != null,
                             )
                         }
                     }
@@ -574,7 +649,8 @@ class ReaderChapterBlockMeasurer(
                     }
                     val placeholderExtent = (style.bodyLineHeightPx ?: style.bodyStyle.fontSizePx)
                         .coerceAtLeast(1f)
-                    val originalSize = imageDimensionsResolver.resolve(block.source)
+                    val measuredSize = imageDimensionsResolver.resolve(block.source)
+                    val originalSize = measuredSize
                         ?: ReaderImageDimensions(placeholderExtent, placeholderExtent)
                     val requestedWidth = options?.requestedWidthFraction?.let { fraction ->
                         style.imageAvailableWidthPx?.times(fraction)
@@ -591,6 +667,7 @@ class ReaderChapterBlockMeasurer(
                         scaleMode = mode.toScaleMode(),
                         pageBreakBefore = mode == ReaderImageLayoutMode.SINGLE_PAGE,
                         pageBreakAfter = mode == ReaderImageLayoutMode.SINGLE_PAGE,
+                        dimensionsKnown = measuredSize != null,
                     )
                 }
                 is ReaderChapterSourceBlock.Paragraph -> {
@@ -773,6 +850,38 @@ private fun ReaderImageDimensions.withWidth(requestedWidthPx: Float?): ReaderIma
     return ReaderImageDimensions(width, heightPx * width / widthPx)
 }
 
+private val localImageLength = Regex("([0-9]+(?:\\.[0-9]+)?|\\.[0-9]+)(em|px|%)?")
+
+/** Local dimensions can opt a small icon into inline layout in automatic mode. */
+private fun ReaderLocalImagePresentation.resolveInlineSize(
+    intrinsic: ReaderImageDimensions,
+    fontSizePx: Float,
+    columnWidthPx: Float?,
+    density: Float,
+): ReaderImageDimensions? {
+    fun resolveLength(value: String?, percentBasePx: Float? = null): Float? {
+        val match = localImageLength.matchEntire(value?.trim()?.lowercase() ?: return null) ?: return null
+        val number = match.groupValues[1].toFloatOrNull() ?: return null
+        val pixels = when (match.groupValues[2]) {
+            "em" -> number * fontSizePx * fontSizeScale
+            "%" -> (percentBasePx ?: return null) * (number / 100f)
+            else -> number * density
+        }
+        return pixels.takeIf { it.isFinite() && it > 0f }
+    }
+
+    val declaredWidth = resolveLength(width, columnWidthPx)
+    // The containing block has no explicit height in the reader's text flow.
+    val declaredHeight = resolveLength(height)
+    val ratio = intrinsic.widthPx / intrinsic.heightPx
+    val resolvedWidth = declaredWidth ?: (declaredHeight ?: return null) * ratio
+    val resolvedHeight = declaredHeight ?: resolvedWidth / ratio
+    val maxExtent = fontSizePx * 2f
+    val maxWidth = minOf(maxExtent, columnWidthPx ?: maxExtent)
+    if (resolvedWidth !in 1f..maxWidth || resolvedHeight !in 1f..maxExtent) return null
+    return ReaderImageDimensions(resolvedWidth, resolvedHeight)
+}
+
 private fun ReaderImageLayoutMode.toScaleMode(): ReaderImageScaleMode = when (this) {
     ReaderImageLayoutMode.FULL_WIDTH -> ReaderImageScaleMode.FIT_WIDTH
     ReaderImageLayoutMode.SINGLE_PAGE -> ReaderImageScaleMode.FIT_PAGE
@@ -781,7 +890,9 @@ private fun ReaderImageLayoutMode.toScaleMode(): ReaderImageScaleMode = when (th
 
 private fun ReaderTextStyle.merge(override: ReaderInlineSourceStyle): ReaderTextStyle = copy(
     colorArgb = override.colorArgb ?: colorArgb,
+    bookColorFallbackArgb = if (override.colorArgb != null) colorArgb else bookColorFallbackArgb,
     backgroundArgb = override.backgroundArgb ?: backgroundArgb,
+    marked = override.marked || marked,
     fontWeight = override.fontWeight ?: fontWeight,
     italic = override.italic ?: italic,
     fontSizePx = fontSizePx * override.fontSizeScale,
@@ -794,6 +905,7 @@ private fun ReaderTextStyle.merge(override: ReaderCharacterStyle?): ReaderTextSt
     if (override == null) return this
     return copy(
         colorArgb = override.colorArgb ?: colorArgb,
+        bookColorFallbackArgb = bookColorFallbackArgb.takeIf { override.colorArgb == null },
         backgroundArgb = override.backgroundArgb ?: backgroundArgb,
         // 边框是一个整体：颜色给了就整套换掉，颜色为 null（HTML 来源、角色气泡都没这项）
         // 就保留原来的，不出现「半径归 override、粗细归底样式」的拼装。
@@ -814,3 +926,5 @@ private fun ReaderTextStyle.merge(override: ReaderCharacterStyle?): ReaderTextSt
         linePadBottomPx = maxOf(linePadBottomPx, override.linePadBottomPx),
     )
 }
+
+private const val RUBY_FONT_SCALE = 0.5f

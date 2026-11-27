@@ -9,8 +9,8 @@ import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import io.legado.app.ui.theme.ComposeEngine
 import io.legado.app.ui.theme.LegadoTheme
-import io.legado.app.ui.theme.ThemeResolver
 import io.legado.app.ui.widget.components.AdaptiveSwitch
 import io.legado.app.ui.widget.components.SplicedColumnDivider
 import top.yukonga.miuix.kmp.preference.SwitchPreference
@@ -24,39 +24,44 @@ fun SwitchSettingItem(
     imageVector: ImageVector? = null,
     color: Color? = null,
     enabled: Boolean = true,
+    modifier: Modifier = Modifier,
     onCheckedChange: (Boolean) -> Unit
 ) {
     val composeEngine = LegadoTheme.composeEngine
     SplicedColumnDivider()
 
-    if (ThemeResolver.isMiuixEngine(composeEngine)) {
-        SwitchPreference(
-            title = title,
-            summary = description,
-            checked = checked,
-            onCheckedChange = onCheckedChange,
-            modifier = Modifier,
-            enabled = enabled,
-        )
-    } else {
-        SettingItem(
-            title = title,
-            description = description,
-            imageVector = imageVector,
-            color = color,
-            enabled = enabled,
-            semanticRole = Role.Switch,
-            semanticToggleState = checked,
-            onClick = { if (enabled) onCheckedChange(!checked) },
-            trailingContent = {
-                AdaptiveSwitch(
-                    modifier = Modifier.clearAndSetSemantics { },
-                    checked = checked,
-                    onCheckedChange = onCheckedChange,
-                    enabled = enabled,
-                    includeStateSemantics = false
-                )
-            }
-        )
+    when (composeEngine) {
+        ComposeEngine.Miuix -> {
+            SwitchPreference(
+                title = title,
+                summary = description,
+                checked = checked,
+                onCheckedChange = onCheckedChange,
+                modifier = modifier,
+                enabled = enabled,
+            )
+        }
+        ComposeEngine.Oxygen, ComposeEngine.Material, ComposeEngine.Mochi, ComposeEngine.Coui -> {
+            SettingItem(
+                modifier = modifier,
+                title = title,
+                description = description,
+                imageVector = imageVector,
+                color = color,
+                enabled = enabled,
+                semanticRole = Role.Switch,
+                semanticToggleState = checked,
+                onClick = { if (enabled) onCheckedChange(!checked) },
+                trailingContent = {
+                    AdaptiveSwitch(
+                        modifier = Modifier.clearAndSetSemantics { },
+                        checked = checked,
+                        onCheckedChange = onCheckedChange,
+                        enabled = enabled,
+                        includeStateSemantics = false
+                    )
+                }
+            )
+        }
     }
 }

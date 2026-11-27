@@ -71,6 +71,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.layout.onSizeChanged
 import android.content.ClipData
@@ -85,7 +86,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.legado.app.R
 import io.legado.app.domain.model.AiMessageRole
 import io.legado.app.domain.model.AiReasoningLevel
-import io.legado.app.ui.ai.AiReasoningModeButton
+import io.legado.app.ui.ai.AiReasoningLevelButton
 import io.legado.app.ui.theme.LegadoTheme
 import io.legado.app.ui.widget.components.AppScaffold
 import io.legado.app.ui.widget.components.AppTextField
@@ -959,7 +960,7 @@ private fun ChatInputBar(
             horizontalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             // Thinking mode button
-            AiReasoningModeButton(
+            AiReasoningLevelButton(
                 level = reasoningLevel,
                 enabled = !isSending,
                 onLevelChange = onUpdateReasoningLevel,
@@ -976,6 +977,7 @@ private fun ChatInputBar(
                 textStyle = LegadoTheme.typography.bodyMedium.copy(
                     color = LegadoTheme.colorScheme.onSurface
                 ),
+                cursorBrush = SolidColor(LegadoTheme.colorScheme.primary),
                 decorationBox = { innerTextField ->
                     Box(
                         modifier = Modifier

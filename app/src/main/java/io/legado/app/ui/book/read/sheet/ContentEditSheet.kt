@@ -32,14 +32,13 @@ import io.legado.app.ui.book.read.ContentEditUiState
 import io.legado.app.ui.book.read.ReadBookIntent
 import io.legado.app.ui.theme.LegadoTheme
 import io.legado.app.ui.widget.components.AppTextField
-import io.legado.app.ui.widget.components.button.series.MediumTonalButton
 import io.legado.app.ui.widget.components.checkBox.AppCheckbox
-import io.legado.app.ui.widget.components.menuItem.MenuItemIcon
-import io.legado.app.ui.widget.components.menuItem.RoundDropdownMenu
-import io.legado.app.ui.widget.components.menuItem.RoundDropdownMenuItem
 import io.legado.app.ui.widget.components.modalBottomSheet.AppModalBottomSheet
+import io.legado.app.ui.widget.components.modalBottomSheet.SheetAction
+import io.legado.app.ui.widget.components.modalBottomSheet.SheetMenuAction
 import io.legado.app.ui.widget.components.progressIndicator.AppCircularProgressIndicator
 import io.legado.app.ui.widget.components.text.AppText
+import kotlinx.collections.immutable.persistentListOf
 
 @Composable
 fun ContentEditSheet(
@@ -52,7 +51,6 @@ fun ContentEditSheet(
     val editorScrollState = rememberScrollState()
     var textLayoutResult by remember { mutableStateOf<TextLayoutResult?>(null) }
     var pendingLocateOffset by remember { mutableStateOf<Int?>(null) }
-    var menuExpanded by remember { mutableStateOf(false) }
 
     LaunchedEffect(show) {
         if (!show) return@LaunchedEffect
@@ -103,52 +101,38 @@ fun ContentEditSheet(
         show = show,
         onDismissRequest = onDismissRequest,
         title = stringResource(R.string.edit_chapter),
-        startAction = {
-            Box {
-                MediumTonalButton(
-                    onClick = { menuExpanded = true },
-                    icon = Icons.Default.MoreVert,
-                    contentDescription = stringResource(R.string.more_menu),
+        startSheetAction = SheetAction(
+            icon = Icons.Default.MoreVert,
+            contentDescription = stringResource(R.string.more_menu),
+            menu = persistentListOf(
+                SheetMenuAction(
+                    id = "reset_content",
+                    label = stringResource(R.string.content_edit_reset),
+                    icon = Icons.Default.Restore,
+                    onClick = { onIntent(ReadBookIntent.ResetContentEdit) },
+                ),
+                SheetMenuAction(
+                    id = "body_only",
+                    label = stringResource(R.string.content_edit_body_only),
+                    checked = state.bodyOnly,
+                    onClick = { onIntent(ReadBookIntent.SetContentEditBodyOnly(!state.bodyOnly)) },
+                ),
+            ),
+        ),
+        endSheetAction = SheetAction(
+            onClick = {
+                onIntent(
+                    ReadBookIntent.SaveContentEdit(
+                        editorState.text.toString(),
+                        state.saveToSource,
+                        state.chapterTitle,
+                    )
                 )
-                RoundDropdownMenu(
-                    expanded = menuExpanded,
-                    onDismissRequest = { menuExpanded = false },
-                ) { dismiss ->
-                    RoundDropdownMenuItem(
-                        text = stringResource(R.string.content_edit_reset),
-                        leadingIcon = { MenuItemIcon(Icons.Default.Restore) },
-                        onClick = {
-                            dismiss()
-                            onIntent(ReadBookIntent.ResetContentEdit)
-                        },
-                    )
-                    RoundDropdownMenuItem(
-                        text = stringResource(R.string.content_edit_body_only),
-                        isSelected = state.bodyOnly,
-                        onClick = {
-                            dismiss()
-                            onIntent(ReadBookIntent.SetContentEditBodyOnly(!state.bodyOnly))
-                        },
-                    )
-                }
-            }
-        },
-        endAction = {
-            MediumTonalButton(
-                onClick = {
-                    onIntent(
-                        ReadBookIntent.SaveContentEdit(
-                            editorState.text.toString(),
-                            state.saveToSource,
-                            state.chapterTitle,
-                        )
-                    )
-                    onDismissRequest()
-                },
-                icon = Icons.Default.Save,
-                contentDescription = stringResource(R.string.action_save),
-            )
-        },
+                onDismissRequest()
+            },
+            icon = Icons.Default.Save,
+            contentDescription = stringResource(R.string.action_save),
+        ),
     ) {
         Column(
             modifier = Modifier

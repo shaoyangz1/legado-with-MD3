@@ -3,6 +3,7 @@ package io.legado.app.ui.widget.components.button.series
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -13,15 +14,26 @@ internal fun smallContainerSize() = squareSize(SmallButtonSize)
 internal val smallIconSize: Dp = 18.dp
 internal val SmallButtonSize = 32.dp
 
+/**
+ * 小号图标按钮。
+ *
+ * [onClick] 传 `null` 得到纯展示形态：几何、选中态与配色不变，但不安装点击节点、涟漪和按钮语义。
+ * 用途同 [MediumTonalButton]：塞进 `AppActionMenu` / `AppChoiceDropdown` 的 `trigger` 槽，
+ * 由入口包唯一可点节点，避免内外两层可点节点。`selected` 仍可表达业务态（例如「正在编辑」）。
+ */
 @Composable
 fun SmallPlainButton(
-    onClick: () -> Unit,
+    onClick: (() -> Unit)?,
     modifier: Modifier = Modifier,
     onLongClick: (() -> Unit)? = null,
     enabled: Boolean = true,
     selected: Boolean = false,
     icon: ImageVector? = null,
     text: String? = null,
+    /** 图标/文字颜色 */
+    contentColor: Color = LegadoTheme.colorScheme.onSurfaceVariant,
+    /** 自定义容器底色；null 时为透明 */
+    containerColor: Color? = null,
     contentDescription: String? = null
 ) {
     SeriesButton(
@@ -33,7 +45,8 @@ fun SmallPlainButton(
         size = if (text == null) smallContainerSize() else null,
         enforceMinimumInteractiveSize = false,
         shape = SmallButtonShape,
-        contentColor = LegadoTheme.colorScheme.onSurfaceVariant
+        contentColor = contentColor,
+        containerColor = containerColor
     ) { contentColor ->
         SeriesButtonContent(
             icon = icon,

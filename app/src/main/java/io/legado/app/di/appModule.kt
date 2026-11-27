@@ -5,6 +5,7 @@ import io.legado.app.data.repository.manga.translation.MangaTranslationRepositor
 import io.legado.app.domain.gateway.MangaTranslationGateway
 import io.legado.app.feature.manga.translation.MangaTranslationViewModel
 import io.legado.app.feature.settings.manga.MangaConfigViewModel
+import io.legado.app.feature.settings.search.SettingsSearchViewModel
 import io.legado.app.domain.gateway.AiImageGateway
 import io.legado.app.data.repository.ai.AiImageRepository
 import io.legado.app.data.repository.manga.translation.MangaImageEditor
@@ -110,6 +111,7 @@ import io.legado.app.data.repository.WebDavBackupRepository
 import io.legado.app.data.repository.WebDavReadingProgressRepository
 import io.legado.app.data.repository.manga.DefaultMangaReaderSession
 import io.legado.app.data.repository.manga.MangaReaderActionRepository
+import io.legado.app.data.repository.manga.MangaExportRepository
 import io.legado.app.data.repository.manga.MangaReaderDataRepository
 import io.legado.app.data.security.CloudTtsCredentialCipher
 import io.legado.app.domain.gateway.AiArtifactGateway
@@ -159,6 +161,7 @@ import io.legado.app.domain.gateway.LabSettingsGateway
 import io.legado.app.domain.gateway.LocalBookGateway
 import io.legado.app.domain.gateway.LocalPasswordGateway
 import io.legado.app.domain.gateway.MangaReaderDataGateway
+import io.legado.app.domain.gateway.MangaExportGateway
 import io.legado.app.domain.gateway.MangaReaderSessionFactory
 import io.legado.app.domain.gateway.MangaSettingsGateway
 import io.legado.app.domain.gateway.OtherConfigSystemGateway
@@ -225,6 +228,7 @@ import io.legado.app.domain.usecase.StartBookSourceCheckUseCase
 import io.legado.app.domain.usecase.SyncHttpTtsCatalogUseCase
 import io.legado.app.domain.usecase.SyncReadAloudVoicesUseCase
 import io.legado.app.domain.usecase.TranslateChapterUseCase
+import io.legado.app.domain.usecase.BookshelfSeriesUseCase
 import io.legado.app.domain.usecase.UpdateBooksGroupUseCase
 import io.legado.app.domain.usecase.UploadReadingProgressUseCase
 import io.legado.app.domain.usecase.VerifyBookmarkTargetUseCase
@@ -361,6 +365,7 @@ val appModule = module {
 
     single { get<AppDatabase>().readRecordDao }
     single { get<AppDatabase>().bookDao }
+    single { get<AppDatabase>().bookSeriesDao }
     single { get<AppDatabase>().bookChapterDao }
     single { get<AppDatabase>().bookGroupDao }
     single { get<AppDatabase>().bookSourceDao }
@@ -407,7 +412,7 @@ val appModule = module {
     }
     single<OtherSettingsGateway> { OtherSettingsRepository() }
     single<CheckSourceSettingsGateway> { CheckSourceSettingsRepository() }
-    single { BookSourceCheckRepository(get(), get(), get()) }
+    single { BookSourceCheckRepository(get(), get()) }
     single<BookSourceCheckGateway> { get<BookSourceCheckRepository>() }
     singleOf(::StartBookSourceCheckUseCase)
     single<DirectLinkSettingsGateway> { DirectLinkSettingsRepository() }
@@ -432,6 +437,7 @@ val appModule = module {
         cloudIdentity = get<io.legado.app.data.repository.manga.translation.MangaCloudOcr>()::identity) }
     viewModelOf(::MangaTranslationViewModel)
     viewModelOf(::MangaConfigViewModel)
+    viewModelOf(::SettingsSearchViewModel)
     single<ChangeSourceSettingsGateway> { ChangeSourceSettingsRepository() }
     single<ImportBookSettingsGateway> { ImportBookSettingsRepository() }
     single<TranslationSettingsGateway> { TranslationSettingsRepository() }
@@ -459,6 +465,7 @@ val appModule = module {
     single<ReadStyleGateway> { get<ReadBookStyleConfigRepository>() }
     factoryOf(::MangaReaderDataRepository)
     factoryOf(::MangaReaderActionRepository)
+    factory<MangaExportGateway> { MangaExportRepository(get(), get()) }
     factory<MangaReaderDataGateway> { get<MangaReaderDataRepository>() }
     factory<MangaReaderSessionFactory> {
         MangaReaderSessionFactory {
@@ -491,6 +498,7 @@ val appModule = module {
     single { HomeDashboardUseCase(get(), Clock.System) }
     singleOf(::RemoveBookGroupAssignmentUseCase)
     singleOf(::UpdateBooksGroupUseCase)
+    singleOf(::BookshelfSeriesUseCase)
     singleOf(::UploadReadingProgressUseCase)
     singleOf(::ResolveBookShelfStateUseCase)
     singleOf(::RefreshTocUseCase)
@@ -540,7 +548,7 @@ val appModule = module {
     single<WebDavBackupGateway> { WebDavBackupRepository() }
     single<ReadingProgressGateway> { WebDavReadingProgressRepository() }
     single<HomepageModulesGateway> { HomepageModulesRepository(get(), get()) }
-    single<BookDomainRepository> { BookDomainRepositoryImpl(get(), get()) }
+    single<BookDomainRepository> { BookDomainRepositoryImpl(get(), get(), get()) }
     single<BookContentProcessGateway> { BookContentProcessRepository(get()) }
     single<BookMarkingGateway> { BookMarkingRepository(get()) }
     single<BookKnowledgeGateway> { BookKnowledgeRepository(get()) }

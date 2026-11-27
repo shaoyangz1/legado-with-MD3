@@ -7,14 +7,18 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.stringArrayResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.legado.app.R
 import io.legado.app.data.repository.ReadPreferences
-import io.legado.app.data.repository.ReadSettingsRepository
+import io.legado.app.domain.model.settings.ReadSettings
+import io.legado.app.feature.reader.core.model.ReaderBookmarkBadgePosition
 import io.legado.app.ui.book.read.ConfigUpdate
 import io.legado.app.ui.book.read.ReadBookIntent
 import io.legado.app.ui.book.read.ReadBookSheet
@@ -24,13 +28,13 @@ import io.legado.app.ui.widget.components.settingItem.TinyClickableSettingItem
 import io.legado.app.ui.widget.components.settingItem.TinyDropdownSettingItem
 import io.legado.app.ui.widget.components.settingItem.TinySliderSettingItem
 import io.legado.app.ui.widget.components.settingItem.TinySwitchSettingItem
-import org.koin.compose.koinInject
 import kotlin.math.roundToInt
 
 @Composable
 fun MoreConfigSheet(
     show: Boolean,
     onDismissRequest: () -> Unit,
+    preferences: ReadPreferences,
     onIntent: (ReadBookIntent) -> Unit,
     onOpenClickRegionalConfig: () -> Unit,
     onOpenPageKeyConfig: () -> Unit,
@@ -38,11 +42,6 @@ fun MoreConfigSheet(
     onPickBookmarkBadgeImage: () -> Unit,
     onResetBookmarkBadge: () -> Unit,
 ) {
-    val readSettingsRepository: ReadSettingsRepository = koinInject()
-    val preferences by readSettingsRepository.preferences.collectAsStateWithLifecycle(
-        initialValue = ReadPreferences()
-    )
-
     AppModalBottomSheet(
         show = show,
         onDismissRequest = onDismissRequest,
@@ -117,12 +116,24 @@ fun MoreConfigSheet(
                 onBookmarkBadgeSizeChange = {
                     onIntent(ReadBookIntent.UpdateConfig(ConfigUpdate.BookmarkBadgeSize(it)))
                 },
+                onBookmarkBadgePositionChange = {
+                    onIntent(ReadBookIntent.UpdateConfig(ConfigUpdate.BookmarkBadgePosition(it)))
+                },
+                onBookmarkBadgeOffsetXChange = {
+                    onIntent(ReadBookIntent.UpdateConfig(ConfigUpdate.BookmarkBadgeOffsetX(it)))
+                },
+                onBookmarkBadgeOffsetYChange = {
+                    onIntent(ReadBookIntent.UpdateConfig(ConfigUpdate.BookmarkBadgeOffsetY(it)))
+                },
             )
 
             // Other
             SectionTitle(stringResource(R.string.other))
             OtherSettings(
                 preferences = preferences,
+                onCommentHeightChange = {
+                    onIntent(ReadBookIntent.UpdateConfig(ConfigUpdate.ParagraphCommentHeight(it)))
+                },
                 onSliderVibratorChange = {
                     onIntent(ReadBookIntent.UpdateConfig(ConfigUpdate.SliderVibrator(it)))
                 },
@@ -260,11 +271,23 @@ private fun PageControlSettings(
     onPickBookmarkBadgeImage: () -> Unit,
     onResetBookmarkBadge: () -> Unit,
     onBookmarkBadgeSizeChange: (Int) -> Unit,
+    onBookmarkBadgePositionChange: (String) -> Unit,
+    onBookmarkBadgeOffsetXChange: (Int) -> Unit,
+    onBookmarkBadgeOffsetYChange: (Int) -> Unit,
 ) {
     val doublePageEntries = stringArrayResource(R.array.double_page_title)
     val doublePageValues = stringArrayResource(R.array.double_page_value)
     val progressBarEntries = stringArrayResource(R.array.progress_bar_behavior_title)
     val progressBarValues = stringArrayResource(R.array.progress_bar_behavior_value)
+    val badgePositionEntries = stringArrayResource(R.array.bookmark_badge_position_title)
+    val badgePositionValues = stringArrayResource(R.array.bookmark_badge_position_value)
+    // 拖动中只更新本地草稿，松手才写设置：每帧回写 value 会让滑块来回跳。
+    var badgeOffsetXDraft by remember(preferences.bookmarkBadgeOffsetX) {
+        mutableFloatStateOf(preferences.bookmarkBadgeOffsetX.toFloat())
+    }
+    var badgeOffsetYDraft by remember(preferences.bookmarkBadgeOffsetY) {
+        mutableFloatStateOf(preferences.bookmarkBadgeOffsetY.toFloat())
+    }
 
     TinyDropdownSettingItem(
         title = stringResource(R.string.double_page_horizontal),
@@ -320,6 +343,38 @@ private fun PageControlSettings(
             onClick = onResetBookmarkBadge,
         )
     }
+    TinyDropdownSettingItem(
+        title = stringResource(R.string.bookmark_badge_position),
+        selectedValue = preferences.bookmarkBadgePosition,
+        displayEntries = badgePositionEntries,
+        entryValues = badgePositionValues,
+        onValueChange = onBookmarkBadgePositionChange,
+    )
+    if (preferences.bookmarkBadgePosition == ReaderBookmarkBadgePosition.CUSTOM.preferenceValue) {
+        // 行程取屏幕尺寸：角标最多移动到页面另一侧，滑块不会被越界夹取浪费一半。
+        val configuration = LocalConfiguration.current
+        TinySliderSettingItem(
+            title = stringResource(R.string.bookmark_badge_offset_x),
+            description = stringResource(R.string.bookmark_badge_offset_origin),
+            value = preferences.bookmarkBadgeOffsetX.toFloat(),
+            valueRange = 0f..configuration.screenWidthDp.toFloat().coerceAtLeast(1f),
+            valueFormat = { "${it.roundToInt()}dp" },
+            onValueChange = { badgeOffsetXDraft = it },
+            onValueChangeFinished = {
+                onBookmarkBadgeOffsetXChange(badgeOffsetXDraft.roundToInt())
+            },
+        )
+        TinySliderSettingItem(
+            title = stringResource(R.string.bookmark_badge_offset_y),
+            value = preferences.bookmarkBadgeOffsetY.toFloat(),
+            valueRange = 0f..configuration.screenHeightDp.toFloat().coerceAtLeast(1f),
+            valueFormat = { "${it.roundToInt()}dp" },
+            onValueChange = { badgeOffsetYDraft = it },
+            onValueChangeFinished = {
+                onBookmarkBadgeOffsetYChange(badgeOffsetYDraft.roundToInt())
+            },
+        )
+    }
     TinySliderSettingItem(
         title = stringResource(R.string.bookmark_badge_size),
         value = preferences.bookmarkBadgeSize.toFloat(),
@@ -332,6 +387,7 @@ private fun PageControlSettings(
 @Composable
 private fun OtherSettings(
     preferences: ReadPreferences,
+    onCommentHeightChange: (Int) -> Unit,
     onSliderVibratorChange: (Boolean) -> Unit,
     onUseNewTocSheetChange: (Boolean) -> Unit,
     onMaxLengthWithNoTocChange: (Int) -> Unit,
@@ -354,7 +410,21 @@ private fun OtherSettings(
 ) {
     val clickImageWayEntries = stringArrayResource(R.array.click_image_way_title)
     val clickImageWayValues = stringArrayResource(R.array.click_image_way_value)
+    val heightOptions = ReadSettings.paragraphCommentHeightOptions
 
+    TinyDropdownSettingItem(
+        title = stringResource(R.string.paragraph_comment_height),
+        selectedValue = preferences.paragraphCommentHeightPercent.toString(),
+        displayEntries = heightOptions.map { percent ->
+            if (percent == 0) {
+                stringResource(R.string.paragraph_comment_height_follow_source)
+            } else {
+                stringResource(R.string.paragraph_comment_height_percent, percent)
+            }
+        }.toTypedArray(),
+        entryValues = heightOptions.map(Int::toString).toTypedArray(),
+        onValueChange = { onCommentHeightChange(it.toInt()) },
+    )
     TinySwitchSettingItem(
         title = stringResource(R.string.enable_slider_vibrator),
         checked = preferences.sliderVibrator,

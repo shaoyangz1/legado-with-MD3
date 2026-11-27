@@ -1,7 +1,6 @@
 package io.legado.app.ui.book.read.sheet
 
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -35,16 +34,16 @@ import io.legado.app.ui.book.read.ReadBookIntent
 import io.legado.app.ui.book.read.ReadSheetConfigUiState
 import io.legado.app.ui.widget.components.TinySwitch
 import io.legado.app.ui.widget.components.alert.AppAlertDialog
-import io.legado.app.ui.widget.components.button.series.MediumTonalButton
 import io.legado.app.ui.widget.components.button.series.SmallTonalButton
 import io.legado.app.ui.widget.components.filePicker.FilePickerSheet
 import io.legado.app.ui.widget.components.importComponents.BatchImportDialog
 import io.legado.app.ui.widget.components.importComponents.SourceInputDialog
-import io.legado.app.ui.widget.components.menuItem.RoundDropdownMenu
-import io.legado.app.ui.widget.components.menuItem.RoundDropdownMenuItem
 import io.legado.app.ui.widget.components.modalBottomSheet.AppModalBottomSheet
+import io.legado.app.ui.widget.components.modalBottomSheet.SheetAction
+import io.legado.app.ui.widget.components.modalBottomSheet.SheetMenuAction
 import io.legado.app.ui.widget.components.reorderAccessibility
 import io.legado.app.ui.widget.components.settingItem.TinySettingItem
+import kotlinx.collections.immutable.persistentListOf
 import sh.calvin.reorderable.ReorderableItem
 import sh.calvin.reorderable.rememberReorderableLazyListState
 
@@ -128,56 +127,37 @@ fun HighlightRuleConfigSheet(
         show = show,
         onDismissRequest = onDismissRequest,
         title = stringResource(R.string.highlight_rule_config),
-        startAction = {
-            MediumTonalButton(
-                onClick = { onIntent(ReadBookIntent.AddHighlightRule) },
-                icon = Icons.Default.Add,
-                contentDescription = stringResource(R.string.add)
-            )
-        },
-        endAction = {
-            var expanded by remember { mutableStateOf(false) }
-            Box {
-                MediumTonalButton(
-                    onClick = { expanded = true },
-                    icon = Icons.Default.MoreVert,
-                    contentDescription = stringResource(R.string.more_menu)
-                )
-                RoundDropdownMenu(
-                    expanded = expanded,
-                    onDismissRequest = { expanded = false },
-                ) {
-                    RoundDropdownMenuItem(
-                        text = stringResource(R.string.highlight_rule_presets),
-                        onClick = {
-                            expanded = false
-                            onIntent(ReadBookIntent.ShowHighlightRulePresets)
-                        },
-                    )
-                    RoundDropdownMenuItem(
-                        text = stringResource(R.string.import_action),
-                        onClick = {
-                            expanded = false
-                            showImportSheet = true
-                        },
-                    )
-                    RoundDropdownMenuItem(
-                        text = stringResource(R.string.export),
-                        onClick = {
-                            expanded = false
-                            onIntent(ReadBookIntent.ExportHighlightRules)
-                        },
-                    )
-                    RoundDropdownMenuItem(
-                        text = stringResource(R.string.copy_url),
-                        onClick = {
-                            expanded = false
-                            onIntent(ReadBookIntent.ExportHighlightRulesAsUrl)
-                        },
-                    )
-                }
-            }
-        },
+        startSheetAction = SheetAction(
+            onClick = { onIntent(ReadBookIntent.AddHighlightRule) },
+            icon = Icons.Default.Add,
+            contentDescription = stringResource(R.string.add),
+        ),
+        endSheetAction = SheetAction(
+            icon = Icons.Default.MoreVert,
+            contentDescription = stringResource(R.string.more_menu),
+            menu = persistentListOf(
+                SheetMenuAction(
+                    id = "highlight_rule_presets",
+                    label = stringResource(R.string.highlight_rule_presets),
+                    onClick = { onIntent(ReadBookIntent.ShowHighlightRulePresets) },
+                ),
+                SheetMenuAction(
+                    id = "import_action",
+                    label = stringResource(R.string.import_action),
+                    onClick = { showImportSheet = true },
+                ),
+                SheetMenuAction(
+                    id = "export",
+                    label = stringResource(R.string.export),
+                    onClick = { onIntent(ReadBookIntent.ExportHighlightRules) },
+                ),
+                SheetMenuAction(
+                    id = "copy_url",
+                    label = stringResource(R.string.copy_url),
+                    onClick = { onIntent(ReadBookIntent.ExportHighlightRulesAsUrl) },
+                ),
+            ),
+        ),
     ) {
         Column(
             modifier = Modifier

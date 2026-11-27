@@ -14,14 +14,14 @@ internal val LocalBottomOverlayPadding = compositionLocalOf { 0.dp }
 
 @Composable
 fun Modifier.adaptiveHorizontalPadding(): Modifier {
-    val horizontal = if (ThemeResolver.isMiuixEngine(composeEngine)) 12.dp else 16.dp
+    val horizontal = if (composeEngine == ComposeEngine.Miuix) 12.dp else 16.dp
     return this.padding(horizontal = horizontal)
 }
 
 @Composable
 fun Modifier.adaptiveHorizontalPaddingTab(): Modifier {
-    val start = if (ThemeResolver.isMiuixEngine(composeEngine)) 12.dp else 0.dp
-    val end = if (ThemeResolver.isMiuixEngine(composeEngine)) 12.dp else 16.dp
+    val start = if (composeEngine == ComposeEngine.Miuix) 12.dp else 0.dp
+    val end = if (composeEngine == ComposeEngine.Miuix) 12.dp else 16.dp
     return this.padding(start = start, end = end)
 }
 
@@ -29,19 +29,19 @@ fun Modifier.adaptiveHorizontalPaddingTab(): Modifier {
 fun Modifier.adaptiveHorizontalPadding(
     vertical: Dp,
 ): Modifier {
-    val horizontal = if (ThemeResolver.isMiuixEngine(composeEngine)) 12.dp else 16.dp
+    val horizontal = if (composeEngine == ComposeEngine.Miuix) 12.dp else 16.dp
     return this.padding(horizontal = horizontal, vertical = vertical)
 }
 
 @Composable
 fun Modifier.adaptiveVerticalPadding(): Modifier {
-    val horizontal = if (ThemeResolver.isMiuixEngine(composeEngine)) 12.dp else 8.dp
+    val horizontal = if (composeEngine == ComposeEngine.Miuix) 12.dp else 8.dp
     return this.padding(horizontal = horizontal)
 }
 
 @Composable
 fun adaptiveHorizonalPadding(): PaddingValues {
-    val horizontal = if (ThemeResolver.isMiuixEngine(composeEngine)) 12.dp else 16.dp
+    val horizontal = if (composeEngine == ComposeEngine.Miuix) 12.dp else 16.dp
     return PaddingValues(
         horizontal = horizontal
     )
@@ -52,7 +52,7 @@ fun adaptiveContentPaddingOnlyVertical(
     top: Dp,
     bottom: Dp
 ): PaddingValues {
-    val adjustedTop = if (ThemeResolver.isMiuixEngine(composeEngine)) top + 8.dp else top
+    val adjustedTop = if (composeEngine == ComposeEngine.Miuix) top + 8.dp else top
     return PaddingValues(
         top = adjustedTop,
         bottom = bottom,
@@ -66,8 +66,8 @@ fun adaptiveContentPadding(
     top: Dp,
     bottom: Dp
 ): PaddingValues {
-    val horizontal = if (ThemeResolver.isMiuixEngine(composeEngine)) 12.dp else 16.dp
-    val adjustedTop = if (ThemeResolver.isMiuixEngine(composeEngine)) top + 12.dp else top + 16.dp
+    val horizontal = if (composeEngine == ComposeEngine.Miuix) 12.dp else 16.dp
+    val adjustedTop = if (composeEngine == ComposeEngine.Miuix) top + 12.dp else top + 16.dp
     return PaddingValues(
         top = adjustedTop,
         bottom = bottom,
@@ -84,8 +84,8 @@ fun adaptiveContentPadding(
     m3Horizontal: Dp
 ): PaddingValues {
     val horizontal =
-        if (ThemeResolver.isMiuixEngine(composeEngine)) miuixHorizontal else m3Horizontal
-    val adjustedTop = if (ThemeResolver.isMiuixEngine(composeEngine)) top + 12.dp else top + 16.dp
+        if (composeEngine == ComposeEngine.Miuix) miuixHorizontal else m3Horizontal
+    val adjustedTop = if (composeEngine == ComposeEngine.Miuix) top + 12.dp else top + 16.dp
     return PaddingValues(
         top = adjustedTop,
         bottom = bottom,
@@ -100,7 +100,7 @@ fun adaptiveContentPadding(
     bottom: Dp,
     horizontal: Dp
 ): PaddingValues {
-    val adjustedTop = if (ThemeResolver.isMiuixEngine(composeEngine)) top + 12.dp else top + 16.dp
+    val adjustedTop = if (composeEngine == ComposeEngine.Miuix) top + 12.dp else top + 16.dp
     return PaddingValues(
         top = adjustedTop,
         bottom = bottom,
@@ -109,19 +109,73 @@ fun adaptiveContentPadding(
     )
 }
 
+/**
+ * 书籍封面上可见区域内缩的量（非沉浸），与 `BookshelfItemCover` 的 padding 同源。
+ *
+ * 口径是「封面到屏幕边的距离」，所以网格内容边距必须减掉这一层：
+ * 直接把 contentPadding 当封面边距会凭空多出 4dp；以后封面为水波纹再扩边也只改这里。
+ */
+internal val BookshelfCoverInnerInset: Dp = 4.dp
+
+/**
+ * 书架书籍封面到屏幕边缘的目标距离：Material / Mochi / Oxygen 16dp，Miuix / Coui 12dp。
+ */
+@Composable
+fun bookshelfCoverScreenMargin(): Dp = when (composeEngine) {
+    ComposeEngine.Miuix, ComposeEngine.Coui -> 12.dp
+    else -> 16.dp
+}
+
+/**
+ * 书籍网格左右内容边距 = 封面目标边距 − 封面自身内边距。
+ *
+ * 书架里所有「铺到屏幕边、但内容仍要和封面像素对齐」的东西（就地展开的系列抽屉等）
+ * 都必须取这一份口径，不要自己重算引擎分支。
+ */
+@Composable
+fun bookshelfCoverGridSidePadding(): Dp = bookshelfCoverScreenMargin() - BookshelfCoverInnerInset
+
 @Composable
 fun adaptiveContentPaddingBookshelf(
     top: Dp,
     bottom: Dp,
-    horizontal: Dp
+    horizontal: Dp,
+    /** 沉浸网格：左右贴到屏幕边（不下沉引擎默认边距），只保留上下内边距。 */
+    edgeToEdge: Boolean = false,
 ): PaddingValues {
-    val adjustedTop = if (ThemeResolver.isMiuixEngine(composeEngine)) top + 12.dp else top + 8.dp
-    val horizontal =
-        if (ThemeResolver.isMiuixEngine(composeEngine)) 6.dp + horizontal else 4.dp + horizontal
+    val adjustedTop = if (composeEngine == ComposeEngine.Miuix) top + 12.dp else top + 8.dp
+    val sidePadding = when {
+        edgeToEdge -> 0.dp
+        composeEngine == ComposeEngine.Miuix -> 6.dp + horizontal
+        else -> 4.dp + horizontal
+    }
     return PaddingValues(
         top = adjustedTop,
         bottom = bottom,
-        start = horizontal,
-        end = horizontal
+        start = sidePadding,
+        end = sidePadding
+    )
+}
+
+/**
+ * 书籍网格的 contentPadding。
+ *
+ * 与 [adaptiveContentPaddingBookshelf] 的差别只在左右：这里按「封面到屏幕边的目标距离」推导，
+ * 而不是「引擎基础偏移 + horizontal」——后者在 Miuix/Coui 下会让封面离屏幕偏大。
+ */
+@Composable
+fun adaptiveContentPaddingBookshelfCoverGrid(
+    top: Dp,
+    bottom: Dp,
+    /** 沉浸网格：封面贴屏幕边，不留左右边距 */
+    immersive: Boolean = false,
+): PaddingValues {
+    val adjustedTop = if (composeEngine == ComposeEngine.Miuix) top + 12.dp else top + 8.dp
+    val sidePadding = if (immersive) 0.dp else bookshelfCoverGridSidePadding()
+    return PaddingValues(
+        top = adjustedTop,
+        bottom = bottom,
+        start = sidePadding,
+        end = sidePadding
     )
 }

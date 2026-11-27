@@ -103,6 +103,12 @@ class ThemeConfigViewModel(
             is ThemeConfigIntent.SetComposeEngine -> updateAppShell {
                 it.copy(composeEngine = intent.value)
             }
+            is ThemeConfigIntent.SetNavigationAnimationStyle -> updateAppShell {
+                it.copy(navigationAnimationStyle = intent.style)
+            }
+            is ThemeConfigIntent.SetTextAnimationLevel -> updateAppShell {
+                it.copy(textAnimationLevel = intent.level)
+            }
             is ThemeConfigIntent.SetPredictiveBackEnabled -> updateAppShell {
                 it.copy(predictiveBackEnabled = intent.enabled)
             }
@@ -121,6 +127,9 @@ class ThemeConfigViewModel(
             }
             is ThemeConfigIntent.SetShowBottomView -> updateAppShell {
                 it.copy(showBottomView = intent.visible)
+            }
+            is ThemeConfigIntent.SetUsePagerTopBar -> updateAppShell {
+                it.copy(usePagerTopBar = intent.enabled)
             }
             is ThemeConfigIntent.SetUseFloatingBottomBar -> updateAppShell {
                 it.copy(useFloatingBottomBar = intent.enabled)

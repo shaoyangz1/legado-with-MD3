@@ -8,6 +8,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
 import androidx.media3.datasource.HttpDataSource
 import androidx.media3.database.StandaloneDatabaseProvider
+import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.FileDataSource
 import androidx.media3.datasource.ResolvingDataSource
 import androidx.media3.datasource.cache.Cache
@@ -54,7 +55,10 @@ object ExoPlayerHelper {
         val formatUrl = url + SPLIT_TAG + GSON.toJson(headers, mapType)
         val builder = MediaItem.Builder().setUri(formatUrl)
         // SPLIT_TAG 破坏了 URI 后缀，DefaultMediaSourceFactory 无法据扩展名推断类型
-        if (url.contains(".m3u8", ignoreCase = true)) {
+        val lastPathSegment = Uri.parse(url).lastPathSegment.orEmpty()
+        if (lastPathSegment.endsWith(".mpd", ignoreCase = true)) {
+            builder.setMimeType(MimeTypes.APPLICATION_MPD)
+        } else if (url.contains(".m3u8", ignoreCase = true)) {
             builder.setMimeType(MimeTypes.APPLICATION_M3U8)
         }
         return builder.build()
@@ -100,8 +104,12 @@ object ExoPlayerHelper {
 
 
 
-    private val resolvingDataSource: ResolvingDataSource.Factory by lazy {
-        ResolvingDataSource.Factory(cacheDataSourceFactory) {
+    internal val resolvingDataSource: ResolvingDataSource.Factory by lazy {
+        // DefaultDataSource 按已剥离 SPLIT_TAG 的 URI scheme 分流：
+        // file/无 scheme -> FileDataSource，content/asset/rawresource/android.resource/data/udp
+        // 走各自本地数据源；其余（含 http/https，以及缺少 RTMP 扩展时的 rtmp）
+        // 回落到 CacheDataSource -> OkHttpDataSource。
+        ResolvingDataSource.Factory(DefaultDataSource.Factory(appCtx, cacheDataSourceFactory)) {
             var res = it
 
             if (it.uri.toString().contains(SPLIT_TAG)) {
@@ -140,7 +148,7 @@ object ExoPlayerHelper {
     /**
      * Okhttp DataSource.Factory
      */
-    private val okhttpDataFactory by lazy {
+    internal val okhttpDataFactory by lazy {
         val client = okHttpClient.newBuilder()
             .callTimeout(0, TimeUnit.SECONDS)
             // 部分网络下 DNS 会返回不可用的 IPv6（伪造/污染地址），浏览器会回退，
@@ -160,7 +168,7 @@ object ExoPlayerHelper {
     /**
      * Exoplayer 内置的缓存
      */
-    private val cache: Cache by lazy {
+    internal val cache: Cache by lazy {
         val databaseProvider = StandaloneDatabaseProvider(appCtx)
         return@lazy SimpleCache(
             //Exoplayer的缓存路径

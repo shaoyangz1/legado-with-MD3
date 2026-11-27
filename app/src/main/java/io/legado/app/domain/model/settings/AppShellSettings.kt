@@ -12,6 +12,8 @@ data class AppShellSettings(
     val predictiveBackEnabled: Boolean = true,
     val readerSharedElementEnabled: Boolean = true,
     val showBottomView: Boolean = true,
+    /** Oxygen 引擎下用主页面的横划顶栏代替底栏导航与各页顶栏。 */
+    val usePagerTopBar: Boolean = false,
     val useFloatingBottomBar: Boolean = false,
     val useFloatingBottomBarLiquidGlass: Boolean = false,
     val tabletInterface: String = "auto",
@@ -31,4 +33,33 @@ data class AppShellSettings(
     val navIconRssSelected: String = "",
     val navIconMySelected: String = "",
     val launcherIcon: String = "ic_launcher",
+    val navigationAnimationStyle: NavigationAnimationStyle = NavigationAnimationStyle.Default,
+    val textAnimationLevel: TextAnimationLevel = TextAnimationLevel.Slide,
 )
+
+enum class TextAnimationLevel(val storedValue: String) {
+    Slide("slide"),
+    Off("off"),
+    Subtle("subtle"),
+    Standard("standard"),
+    Strong("strong");
+
+    companion object {
+        fun fromStoredValue(value: String?): TextAnimationLevel =
+            entries.firstOrNull { it.storedValue == value } ?: Slide
+    }
+}
+
+enum class NavigationAnimationStyle(val storedValue: String) {
+    Default("default"),
+    Miuix("miuix"),
+    Scale("scale");
+
+    companion object {
+        fun fromStoredValue(value: String?): NavigationAnimationStyle = when (value) {
+            "mochi" -> Miuix
+            "aosp" -> Scale
+            else -> entries.firstOrNull { it.storedValue == value } ?: Default
+        }
+    }
+}

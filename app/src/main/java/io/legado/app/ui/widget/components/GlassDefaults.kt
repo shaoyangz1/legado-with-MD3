@@ -4,7 +4,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 import io.legado.app.domain.model.settings.customColors
 import io.legado.app.ui.theme.LegadoTheme
+import io.legado.app.ui.theme.ComposeEngine
 import io.legado.app.ui.theme.LocalAppUiConfiguration
+import io.legado.app.ui.theme.LocalMiuixBarBackdrop
+import io.legado.app.ui.theme.LocalMochiScrollBlurProgress
 
 object GlassDefaults {
 
@@ -15,7 +18,15 @@ object GlassDefaults {
      */
     @Composable
     fun glassColor(noBlurColor: Color, blurAlpha: Float): Color {
-        return if (LocalAppUiConfiguration.current.theme.enableBlur) {
+        val enableBlur = LocalAppUiConfiguration.current.theme.enableBlur
+        val active = when (LegadoTheme.composeEngine) {
+            ComposeEngine.Material -> enableBlur
+            // Miuix 的顶/底栏模糊常开，enableBlur 不影响它。
+            ComposeEngine.Miuix -> LocalMiuixBarBackdrop.current != null
+            ComposeEngine.Mochi -> LocalMochiScrollBlurProgress.current != null
+            ComposeEngine.Oxygen, ComposeEngine.Coui -> false
+        }
+        return if (active) {
             noBlurColor.copy(alpha = blurAlpha)
         } else {
             noBlurColor
@@ -26,7 +37,9 @@ object GlassDefaults {
     fun secondaryColorOr(fallback: @Composable () -> Color): Color {
         val themeSettings = LocalAppUiConfiguration.current.theme
         val secondaryColor = themeSettings.customColors(LegadoTheme.isDark).secondary
-        return if (themeSettings.enableDeepPersonalization && secondaryColor != 0) {
+        return if (themeSettings.enableDeepPersonalization && secondaryColor != 0 &&
+            (LegadoTheme.composeEngine != ComposeEngine.Oxygen || themeSettings.useMiuixMonet)
+        ) {
             Color(secondaryColor)
         } else {
             fallback()

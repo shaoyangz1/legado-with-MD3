@@ -400,6 +400,9 @@ class ReadSettingsRepository(
             swipeToAddBookmark = compatDsValue(Keys.SwipeToAddBookmark, false),
             bookmarkBadgeImage = compatDsValue(Keys.BookmarkBadgeImage, ""),
             bookmarkBadgeSize = compatDsValue(Keys.BookmarkBadgeSize, 10),
+            bookmarkBadgePosition = compatDsValue(Keys.BookmarkBadgePosition, "topEnd"),
+            bookmarkBadgeOffsetX = compatDsValue(Keys.BookmarkBadgeOffsetX, 0),
+            bookmarkBadgeOffsetY = compatDsValue(Keys.BookmarkBadgeOffsetY, 0),
             pageTouchSlop = compatDsValue(Keys.PageTouchSlop, 0),
             sliderVibrator = compatDsValue(Keys.SliderVibrator, false),
             useNewTocSheet = compatDsValue(Keys.UseNewTocSheet, true),
@@ -425,6 +428,9 @@ class ReadSettingsRepository(
             paragraphBubblePackage = compatDsValue(Keys.ParagraphBubblePackage, "builtin_default"),
             forceSoftwareParagraphBubble =
                 compatDsValue(Keys.ForceSoftwareParagraphBubble, false),
+            paragraphCommentHeightPercent =
+                compatDsValue(Keys.ParagraphCommentHeightPercent, 0)
+                    .takeIf { it in ReadSettings.paragraphCommentHeightOptions } ?: 0,
             preDownloadNum = compatDsValue(Keys.PreDownloadNum, 10),
             preDownloadNumPrev = compatDsValue(Keys.PreDownloadNumPrev, 0),
             prevKeys = compatDsValue(Keys.PrevKeys, ""),
@@ -526,6 +532,9 @@ class ReadSettingsRepository(
         val SwipeToAddBookmark = booleanPreferencesKey(PreferKey.swipeToAddBookmark)
         val BookmarkBadgeImage = stringPreferencesKey(PreferKey.bookmarkBadgeImage)
         val BookmarkBadgeSize = intPreferencesKey(PreferKey.bookmarkBadgeSize)
+        val BookmarkBadgePosition = stringPreferencesKey(PreferKey.bookmarkBadgePosition)
+        val BookmarkBadgeOffsetX = intPreferencesKey(PreferKey.bookmarkBadgeOffsetX)
+        val BookmarkBadgeOffsetY = intPreferencesKey(PreferKey.bookmarkBadgeOffsetY)
         val PageTouchSlop = intPreferencesKey(PreferKey.pageTouchSlop)
         val SliderVibrator = booleanPreferencesKey(PreferKey.sliderVibrator)
         val UseNewTocSheet = booleanPreferencesKey(PreferKey.useNewTocSheet)
@@ -550,6 +559,8 @@ class ReadSettingsRepository(
         val ParagraphBubblePackage = stringPreferencesKey(PreferKey.paragraphBubblePackage)
         val ForceSoftwareParagraphBubble =
             booleanPreferencesKey(PreferKey.forceSoftwareParagraphBubble)
+        val ParagraphCommentHeightPercent =
+            intPreferencesKey(PreferKey.paragraphCommentHeightPercent)
         val PreDownloadNum = intPreferencesKey(PreferKey.preDownloadNum)
         val PreDownloadNumPrev = intPreferencesKey(PreferKey.preDownloadNumPrev)
         val PrevKeys = stringPreferencesKey(PreferKey.prevKeys)
@@ -663,6 +674,9 @@ internal fun ReadSettings.toGatewayPrefMap(): Map<String, Any?> = mapOf(
     PreferKey.swipeToAddBookmark to swipeToAddBookmark,
     PreferKey.bookmarkBadgeImage to bookmarkBadgeImage,
     PreferKey.bookmarkBadgeSize to bookmarkBadgeSize,
+    PreferKey.bookmarkBadgePosition to bookmarkBadgePosition,
+    PreferKey.bookmarkBadgeOffsetX to bookmarkBadgeOffsetX,
+    PreferKey.bookmarkBadgeOffsetY to bookmarkBadgeOffsetY,
     PreferKey.pageTouchSlop to pageTouchSlop,
     PreferKey.sliderVibrator to sliderVibrator,
     PreferKey.useNewTocSheet to useNewTocSheet,
@@ -686,6 +700,7 @@ internal fun ReadSettings.toGatewayPrefMap(): Map<String, Any?> = mapOf(
     PreferKey.systemTypefaces to systemTypefaces,
     PreferKey.paragraphBubblePackage to paragraphBubblePackage,
     PreferKey.forceSoftwareParagraphBubble to forceSoftwareParagraphBubble,
+    PreferKey.paragraphCommentHeightPercent to paragraphCommentHeightPercent,
     PreferKey.preDownloadNum to preDownloadNum,
     PreferKey.preDownloadNumPrev to preDownloadNumPrev,
     PreferKey.prevKeys to prevKeys,

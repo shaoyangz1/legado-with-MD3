@@ -32,6 +32,12 @@ data class ReadSettings(
     val swipeToAddBookmark: Boolean = false,
     val bookmarkBadgeImage: String = "",
     val bookmarkBadgeSize: Int = 10,
+    /** 角标锚点：topEnd（默认，右上）/ topStart（左上）/ custom（按下方偏移量摆放）。 */
+    val bookmarkBadgePosition: String = "topEnd",
+    /** 自定义角标位置：相对正文区左上角的水平偏移（dp）。 */
+    val bookmarkBadgeOffsetX: Int = 0,
+    /** 自定义角标位置：相对正文区左上角的垂直偏移（dp）。 */
+    val bookmarkBadgeOffsetY: Int = 0,
     val pageTouchSlop: Int = 0,
     val sliderVibrator: Boolean = false,
     val useNewTocSheet: Boolean = true,
@@ -123,4 +129,10 @@ data class ReadSettings(
     val showMenuIcon: Boolean = false,
     val titleBarCompact: Boolean = false,
     val moreActionsConfig: String = "",
-)
+    /** 0 表示使用书源提供的弹窗高度。 */
+    val paragraphCommentHeightPercent: Int = 0,
+) {
+    companion object {
+        internal val paragraphCommentHeightOptions = listOf(0, 30, 50, 70, 90, 100)
+    }
+}

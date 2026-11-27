@@ -18,7 +18,7 @@ import androidx.compose.ui.unit.dp
 import io.legado.app.R
 import io.legado.app.domain.model.AiMessagePart
 import io.legado.app.domain.model.AiMessageRole
-import io.legado.app.ui.ai.AiReasoningModeButton
+import io.legado.app.ui.ai.AiReasoningLevelSection
 import io.legado.app.ui.ai.chat.AiChatMessageUi
 import io.legado.app.ui.ai.chat.AiGeneratedMessageContent
 import io.legado.app.ui.book.read.AiTextCleanUiState
@@ -28,6 +28,7 @@ import io.legado.app.ui.widget.components.button.ConfirmDismissButtonsRow
 import io.legado.app.ui.widget.components.button.series.SmallTonalButton
 import io.legado.app.ui.widget.components.card.NormalCard
 import io.legado.app.ui.widget.components.modalBottomSheet.AppModalBottomSheet
+import io.legado.app.ui.widget.components.modalBottomSheet.MochiSheetLayout
 import io.legado.app.ui.widget.components.progressIndicator.AppCircularProgressIndicator
 import io.legado.app.ui.widget.components.text.AppText
 import kotlinx.collections.immutable.toImmutableList
@@ -44,14 +45,8 @@ fun AiTextCleanSheet(
         onDismissRequest = {
             if (!state.isApplying) onDismissRequest()
         },
+        mochiLayout = MochiSheetLayout.Compatibility,
         title = stringResource(R.string.ai_text_clean),
-        endAction = {
-            AiReasoningModeButton(
-                level = state.reasoningLevel,
-                enabled = !state.isLoading && !state.isApplying,
-                onLevelChange = { onIntent(ReadBookIntent.SetAiTextCleanReasoningLevel(it)) },
-            )
-        },
     ) {
         Column(
             modifier = Modifier
@@ -140,6 +135,13 @@ fun AiTextCleanSheet(
                     style = LegadoTheme.typography.bodySmall,
                 )
                 Spacer(Modifier.height(20.dp))
+                // 思考档位原本是头部按钮点开的二级面板，头部槽位只表达单颗按钮，改为正文内选择。
+                AiReasoningLevelSection(
+                    level = state.reasoningLevel,
+                    enabled = !state.isLoading && !state.isApplying,
+                    onLevelChange = { onIntent(ReadBookIntent.SetAiTextCleanReasoningLevel(it)) },
+                )
+                Spacer(Modifier.height(12.dp))
             }
 
             ConfirmDismissButtonsRow(

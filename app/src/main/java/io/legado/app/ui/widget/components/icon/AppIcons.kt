@@ -19,6 +19,7 @@ import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.LocationSearching
 import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material.icons.filled.MoreVert
@@ -42,13 +43,15 @@ import androidx.compose.material.icons.outlined.RssFeed
 import androidx.compose.material.icons.outlined.Sell
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.vector.ImageVector
+import com.itos.coui.icons.CouiIcons
 import io.legado.app.ui.main.MainDestination
+import io.legado.app.ui.theme.ComposeEngine
 import io.legado.app.ui.theme.LegadoTheme
-import io.legado.app.ui.theme.ThemeResolver
+import io.oxygenx.icons.material.MaterialSymbols
 import top.yukonga.miuix.kmp.icon.MiuixIcons
 import top.yukonga.miuix.kmp.icon.extended.Add
 import top.yukonga.miuix.kmp.icon.extended.Album
-import top.yukonga.miuix.kmp.icon.extended.Back
+import top.yukonga.miuix.kmp.icon.extended.ChevronBackward
 import top.yukonga.miuix.kmp.icon.extended.Close
 import top.yukonga.miuix.kmp.icon.extended.ContactsBook
 import top.yukonga.miuix.kmp.icon.extended.Delete
@@ -66,93 +69,208 @@ import top.yukonga.miuix.kmp.icon.extended.Settings
 import top.yukonga.miuix.kmp.icon.extended.Unpin
 import top.yukonga.miuix.kmp.icon.extended.WorldClock
 
+/**
+ * Material / Miuix / COUI / Oxygen 的图标出口，Mochi 复用 Material 图标。
+ * Oxygen 全部使用 Material Symbols Outlined、wght=300、FILL=0，与库内核心图标统一。
+ *
+ * COUI 图标库只收录系统设置、云服务与相册一类图形，覆盖面小于 Material Icons：
+ * 没有编辑、删除、勾选、历史、刷新、信息等图形。这里只做语义确实等价的映射，
+ * 缺项一律落到 Material 图标，保证调用方无需关心引擎差异。
+ */
 object AppIcons {
 
-    private val isMiuix: Boolean
+    private val engine: ComposeEngine
         @Composable
-        get() = ThemeResolver.isMiuixEngine(LegadoTheme.composeEngine)
+        get() = LegadoTheme.composeEngine
+
+    /**
+     * 行首图标（菜单项、设置项）。
+     *
+     * COUI 的原生菜单与设置列表不带行首图标，与 Miuix 设置项（`ArrowPreference` /
+     * `SwitchPreference` 不接收图标）保持同一取向，因此 Coui 返回 null 由组件跳过整块图标；
+     * Material/Mochi、Oxygen 与 Miuix 菜单（仍要保留图标）原样返回。
+     */
+    @Composable
+    fun leadingOrNull(icon: ImageVector): ImageVector? = when (engine) {
+        ComposeEngine.Coui -> null
+        else -> icon
+    }
 
     val Search: ImageVector
         @Composable
-        get() = if (isMiuix) MiuixIcons.Search else Icons.Default.Search
+        get() = when (engine) {
+            ComposeEngine.Oxygen -> MaterialSymbols.Search
+            ComposeEngine.Miuix -> MiuixIcons.Search
+            ComposeEngine.Coui -> CouiIcons.Outlined.Search
+            else -> Icons.Default.Search
+        }
 
     val MoreVert: ImageVector
         @Composable
-        get() = if (isMiuix) MiuixIcons.More else Icons.Default.MoreVert
+        get() = when (engine) {
+            ComposeEngine.Oxygen -> MaterialSymbols.MoreVert
+            ComposeEngine.Miuix -> MiuixIcons.More
+            ComposeEngine.Coui -> CouiIcons.Filled.More
+            else -> Icons.Default.MoreVert
+        }
 
+    // COUI 没有编辑图标，与 Material/Mochi 共用 Material 图标
     val Edit: ImageVector
         @Composable
-        get() = if (isMiuix) MiuixIcons.Edit else Icons.Default.Edit
+        get() = when (engine) {
+            ComposeEngine.Oxygen -> MaterialSymbols.Edit
+            ComposeEngine.Miuix -> MiuixIcons.Edit
+            else -> Icons.Default.Edit
+        }
 
+    // COUI 没有删除图标
     val Delete: ImageVector
         @Composable
-        get() = if (isMiuix) MiuixIcons.Delete else Icons.Default.Delete
+        get() = when (engine) {
+            ComposeEngine.Oxygen -> MaterialSymbols.Delete
+            ComposeEngine.Miuix -> MiuixIcons.Delete
+            else -> Icons.Default.Delete
+        }
 
     val Close: ImageVector
         @Composable
-        get() = if (isMiuix) MiuixIcons.Close else Icons.Default.Clear
+        get() = when (engine) {
+            ComposeEngine.Oxygen -> MaterialSymbols.Close
+            ComposeEngine.Miuix -> MiuixIcons.Close
+            ComposeEngine.Coui -> CouiIcons.Filled.Close
+            else -> Icons.Default.Clear
+        }
 
     val Back: ImageVector
         @Composable
-        get() = if (isMiuix) MiuixIcons.Back else Icons.AutoMirrored.Filled.ArrowBack
+        get() = when (engine) {
+            ComposeEngine.Oxygen -> MaterialSymbols.ArrowBackIosNew
+            ComposeEngine.Miuix -> MiuixIcons.ChevronBackward
+            ComposeEngine.Coui -> CouiIcons.Filled.Back
+            else -> Icons.AutoMirrored.Filled.ArrowBack
+        }
 
     val Filter: ImageVector
         @Composable
-        get() = if (isMiuix) MiuixIcons.Filter else Icons.Outlined.FilterAlt
+        get() = when (engine) {
+            ComposeEngine.Oxygen -> MaterialSymbols.FilterAlt
+            ComposeEngine.Miuix -> MiuixIcons.Filter
+            ComposeEngine.Coui -> CouiIcons.Outlined.ListFilter
+            else -> Icons.Outlined.FilterAlt
+        }
 
     val Settings: ImageVector
         @Composable
-        get() = if (isMiuix) MiuixIcons.Settings else Icons.Default.Settings
+        get() = when (engine) {
+            ComposeEngine.Oxygen -> MaterialSymbols.Settings
+            ComposeEngine.Miuix -> MiuixIcons.Settings
+            ComposeEngine.Coui -> CouiIcons.Outlined.Setting
+            else -> Icons.Default.Settings
+        }
 
+    // COUI 没有缺陷报告图标
     val BugReport: ImageVector
         @Composable
-        get() = Icons.Default.BugReport
+        get() = when (engine) {
+            ComposeEngine.Oxygen -> MaterialSymbols.BugReport
+            else -> Icons.Default.BugReport
+        }
 
+    // 精确/非精确搜索是一对开关图标，COUI 只有定位图钉、没有对应的「未定位」图形，
+    // 两态都保持 Material 图标，避免切换时视觉不成对
     val PrecisionSearch: ImageVector
         @Composable
-        get() = if (isMiuix) MiuixIcons.Pin else Icons.Default.MyLocation
+        get() = when (engine) {
+            ComposeEngine.Oxygen -> MaterialSymbols.MyLocation
+            ComposeEngine.Miuix -> MiuixIcons.Pin
+            else -> Icons.Default.MyLocation
+        }
 
     val UnPrecisionSearch: ImageVector
         @Composable
-        get() = if (isMiuix) MiuixIcons.Unpin else Icons.Default.LocationSearching
+        get() = when (engine) {
+            ComposeEngine.Oxygen -> MaterialSymbols.LocationSearching
+            ComposeEngine.Miuix -> MiuixIcons.Unpin
+            else -> Icons.Default.LocationSearching
+        }
 
+    // COUI 没有时钟类图标，历史记录保持 Material 图标
     val History: ImageVector
         @Composable
-        get() = if (isMiuix) MiuixIcons.WorldClock else Icons.Default.History
+        get() = when (engine) {
+            ComposeEngine.Oxygen -> MaterialSymbols.History
+            ComposeEngine.Miuix -> MiuixIcons.WorldClock
+            else -> Icons.Default.History
+        }
 
+    // COUI 的 Next 是前进箭头而非刷新，重试保持 Material 图标
     val Replay: ImageVector
         @Composable
-        get() = if (isMiuix) MiuixIcons.Refresh else Icons.Default.Replay
+        get() = when (engine) {
+            ComposeEngine.Oxygen -> MaterialSymbols.Replay
+            ComposeEngine.Miuix -> MiuixIcons.Refresh
+            else -> Icons.Default.Replay
+        }
 
     val MoreCircle: ImageVector
         @Composable
-        get() = if (isMiuix) MiuixIcons.MoreCircle else Icons.Default.MoreHoriz
+        get() = when (engine) {
+            ComposeEngine.Oxygen -> MaterialSymbols.MoreHoriz
+            ComposeEngine.Miuix -> MiuixIcons.MoreCircle
+            ComposeEngine.Coui -> CouiIcons.Filled.More
+            else -> Icons.Default.MoreHoriz
+        }
 
+    // COUI 没有勾选图标
     val Check: ImageVector
         @Composable
-        get() = Icons.Default.Check
+        get() = when (engine) {
+            ComposeEngine.Oxygen -> MaterialSymbols.Check
+            else -> Icons.Default.Check
+        }
 
     val Add: ImageVector
         @Composable
-        get() = if (isMiuix) MiuixIcons.Add else Icons.Default.Add
+        get() = when (engine) {
+            ComposeEngine.Oxygen -> MaterialSymbols.Add
+            ComposeEngine.Miuix -> MiuixIcons.Add
+            ComposeEngine.Coui -> CouiIcons.Filled.Add
+            else -> Icons.Default.Add
+        }
 
+    // COUI 没有信息图标（SettingDetail 是设置齿轮，不能替代）
     val Info: ImageVector
         @Composable
-        get() = if (isMiuix) MiuixIcons.Info else Icons.Outlined.Info
+        get() = when (engine) {
+            ComposeEngine.Oxygen -> MaterialSymbols.Info
+            ComposeEngine.Miuix -> MiuixIcons.Info
+            else -> Icons.Outlined.Info
+        }
 
     val Group: ImageVector
         @Composable
-        get() = if (isMiuix) MiuixIcons.Filter else Icons.Outlined.Sell
+        get() = when (engine) {
+            ComposeEngine.Oxygen -> MaterialSymbols.Sell
+            ComposeEngine.Miuix -> MiuixIcons.Filter
+            ComposeEngine.Coui -> CouiIcons.Filled.Users
+            else -> Icons.Outlined.Sell
+        }
 
-    // ————————————— 播放器专用：Miuix 没有对应图标，两个引擎共用 Material 图标 —————————————
+    // ————————————— 播放器专用：Miuix/COUI 没有对应图标，Oxygen 使用 Symbols，其他引擎共用 Material 图标 —————————————
 
     val Previous: ImageVector
         @Composable
-        get() = Icons.Default.SkipPrevious
+        get() = when (engine) {
+            ComposeEngine.Oxygen -> MaterialSymbols.SkipPrevious
+            else -> Icons.Default.SkipPrevious
+        }
 
     val Next: ImageVector
         @Composable
-        get() = Icons.Default.SkipNext
+        get() = when (engine) {
+            ComposeEngine.Oxygen -> MaterialSymbols.SkipNext
+            else -> Icons.Default.SkipNext
+        }
 
     val Rewind: ImageVector
         @Composable
@@ -164,63 +282,102 @@ object AppIcons {
 
     val Speed: ImageVector
         @Composable
-        get() = Icons.Default.Speed
+        get() = when (engine) {
+            ComposeEngine.Oxygen -> MaterialSymbols.Speed
+            else -> Icons.Default.Speed
+        }
 
     val Episodes: ImageVector
         @Composable
-        get() = Icons.AutoMirrored.Filled.List
+        get() = when (engine) {
+            ComposeEngine.Oxygen -> MaterialSymbols.List
+            else -> Icons.AutoMirrored.Filled.List
+        }
 
     val Fullscreen: ImageVector
         @Composable
-        get() = Icons.Default.Fullscreen
+        get() = when (engine) {
+            ComposeEngine.Oxygen -> MaterialSymbols.Fullscreen
+            else -> Icons.Default.Fullscreen
+        }
 
     val FullscreenExit: ImageVector
         @Composable
-        get() = Icons.Default.FullscreenExit
+        get() = when (engine) {
+            ComposeEngine.Oxygen -> MaterialSymbols.FullscreenExit
+            else -> Icons.Default.FullscreenExit
+        }
 
     val PictureInPicture: ImageVector
         @Composable
-        get() = Icons.Default.PictureInPictureAlt
+        get() = when (engine) {
+            ComposeEngine.Oxygen -> MaterialSymbols.PictureInPictureAlt
+            else -> Icons.Default.PictureInPictureAlt
+        }
 
     val MiniWindow: ImageVector
         @Composable
-        get() = Icons.Default.OpenInNew
+        get() = when (engine) {
+            ComposeEngine.Oxygen -> MaterialSymbols.OpenInNew
+            else -> Icons.Default.OpenInNew
+        }
+
+    val ExpandLess: ImageVector
+        @Composable
+        get() = when (engine) {
+            ComposeEngine.Oxygen -> MaterialSymbols.ExpandLess
+            else -> Icons.Default.KeyboardArrowUp
+        }
 
     val ExpandMore: ImageVector
         @Composable
-        get() = Icons.Default.KeyboardArrowDown
+        get() = when (engine) {
+            ComposeEngine.Oxygen -> MaterialSymbols.ExpandMore
+            else -> Icons.Default.KeyboardArrowDown
+        }
 
     @Composable
     fun mainDestination(destination: MainDestination, selected: Boolean): ImageVector {
-        return when (destination) {
-            MainDestination.Home -> if (isMiuix) {
-                MiuixIcons.Regular.ContactsBook
-            } else {
-                if (selected) Icons.Default.Home else Icons.Outlined.Home
+        return when (engine) {
+            ComposeEngine.Oxygen -> when (destination) {
+                MainDestination.Home -> MaterialSymbols.Home
+                MainDestination.Bookshelf -> MaterialSymbols.LibraryBooks
+                MainDestination.Explore -> MaterialSymbols.Explore
+                MainDestination.Rss -> MaterialSymbols.RssFeed
+                MainDestination.My -> MaterialSymbols.Person
             }
 
-            MainDestination.Bookshelf -> if (isMiuix) {
-                if (selected) MiuixIcons.Regular.Notes else MiuixIcons.Regular.Notes
-            } else {
-                if (selected) Icons.AutoMirrored.Filled.LibraryBooks else Icons.AutoMirrored.Outlined.LibraryBooks
+            ComposeEngine.Miuix -> when (destination) {
+                MainDestination.Home -> MiuixIcons.Regular.ContactsBook
+                MainDestination.Bookshelf -> MiuixIcons.Regular.Notes
+                MainDestination.Explore -> MiuixIcons.Regular.Album
+                MainDestination.Rss -> MiuixIcons.Regular.Favorites
+                MainDestination.My -> MiuixIcons.Regular.Settings
             }
 
-            MainDestination.Explore -> if (isMiuix) {
-                if (selected) MiuixIcons.Regular.Album else MiuixIcons.Regular.Album
-            } else {
-                if (selected) Icons.Default.Explore else Icons.Outlined.Explore
+            ComposeEngine.Coui -> when (destination) {
+                MainDestination.Home -> CouiIcons.Filled.Grid
+                MainDestination.Bookshelf -> CouiIcons.Filled.BookOpen
+                MainDestination.Explore ->
+                    if (selected) CouiIcons.Filled.WandSpark else CouiIcons.Outlined.WandSpark
+
+                MainDestination.Rss ->
+                    if (selected) CouiIcons.Filled.CloudLink else CouiIcons.Outlined.CloudLink
+
+                MainDestination.My -> CouiIcons.Filled.UserCircle
             }
 
-            MainDestination.Rss -> if (isMiuix) {
-                if (selected) MiuixIcons.Regular.Favorites else MiuixIcons.Regular.Favorites
-            } else {
-                if (selected) Icons.Default.RssFeed else Icons.Outlined.RssFeed
-            }
+            else -> when (destination) {
+                MainDestination.Home -> if (selected) Icons.Default.Home else Icons.Outlined.Home
+                MainDestination.Bookshelf -> if (selected) {
+                    Icons.AutoMirrored.Filled.LibraryBooks
+                } else {
+                    Icons.AutoMirrored.Outlined.LibraryBooks
+                }
 
-            MainDestination.My -> if (isMiuix) {
-                if (selected) MiuixIcons.Regular.Settings else MiuixIcons.Regular.Settings
-            } else {
-                if (selected) Icons.Default.Person else Icons.Outlined.Person
+                MainDestination.Explore -> if (selected) Icons.Default.Explore else Icons.Outlined.Explore
+                MainDestination.Rss -> if (selected) Icons.Default.RssFeed else Icons.Outlined.RssFeed
+                MainDestination.My -> if (selected) Icons.Default.Person else Icons.Outlined.Person
             }
         }
     }
