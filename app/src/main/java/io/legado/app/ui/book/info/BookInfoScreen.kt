@@ -186,6 +186,8 @@ import kotlinx.collections.immutable.ImmutableList
 import io.legado.app.ui.widget.components.menu.AppAction
 import io.legado.app.ui.widget.components.menu.AppActionGroup
 import io.legado.app.ui.widget.components.menu.AppActionMenu
+import io.legado.app.ui.widget.components.menuItem.RoundDropdownMenu
+import io.legado.app.ui.widget.components.menuItem.RoundDropdownMenuItem
 import io.legado.app.ui.widget.components.topbar.TopBarActionMenu
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toImmutableList
@@ -972,6 +974,8 @@ private fun resolveBookInfoBackdropStyle(
 
 /** 详情页更多菜单的稳定 ID 前缀：`book_` + `BookInfoMenuAction.name`。 */
 private const val MENU_PREFIX = "book_"
+private const val TITLE_MENU_SEARCH = "title_menu_search"
+private const val TITLE_MENU_TOGGLE_EXPAND = "title_menu_toggle_expand"
 
 @Composable
 private fun BookInfoTopBarActions(

@@ -1,6 +1,7 @@
 package io.legado.app.service
 
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue

@@ -1036,6 +1036,21 @@ fun BookshelfScreen(
                                     onIntent(BookshelfIntent.ToggleEditMode)
                                     toggleBookSelection(item.book.bookUrl)
                                 },
+                                onSeriesRename = {
+                                    onIntent(BookshelfIntent.ShowOverlay(BookshelfOverlay.SeriesRename(it)))
+                                },
+                                onSeriesManage = { urls ->
+                                    onIntent(BookshelfIntent.EditSeries(urls))
+                                },
+                                onSeriesSetCover = { name, cover ->
+                                    onIntent(BookshelfIntent.SetSeriesCover(name, cover))
+                                },
+                                onSeriesExpandChange = { name ->
+                                    onIntent(BookshelfIntent.SetExpandedSeries(name))
+                                },
+                                onSeriesDissolve = { name, count ->
+                                    onIntent(BookshelfIntent.ShowOverlay(BookshelfOverlay.SeriesDissolve(name, count)))
+                                },
                                 onLockedBookClick = requestBookUnlock,
                                 isCurrentPage = true,
                                 sharedCoverGroupId = currentGroupId,
@@ -1126,6 +1141,21 @@ fun BookshelfScreen(
                                             onBookSelectionModeRequest = { item ->
                                                 onIntent(BookshelfIntent.ToggleEditMode)
                                                 toggleBookSelection(item.book.bookUrl)
+                                            },
+                                            onSeriesRename = {
+                                                onIntent(BookshelfIntent.ShowOverlay(BookshelfOverlay.SeriesRename(it)))
+                                            },
+                                            onSeriesManage = { urls ->
+                                                onIntent(BookshelfIntent.EditSeries(urls))
+                                            },
+                                            onSeriesSetCover = { name, cover ->
+                                                onIntent(BookshelfIntent.SetSeriesCover(name, cover))
+                                            },
+                                            onSeriesExpandChange = { name ->
+                                                onIntent(BookshelfIntent.SetExpandedSeries(name))
+                                            },
+                                            onSeriesDissolve = { name, count ->
+                                                onIntent(BookshelfIntent.ShowOverlay(BookshelfOverlay.SeriesDissolve(name, count)))
                                             },
                                             onLockedBookClick = requestBookUnlock,
                                             isCurrentPage = isSelectedGroup,
@@ -1786,6 +1816,11 @@ fun BookshelfPage(
     onBookLongClick: (BookShelfItem, String?) -> Unit,
     /** 磁力记录没有详情页：长按直接进入选择模式，方便删除/分组。 */
     onBookSelectionModeRequest: (BookUiItem) -> Unit = {},
+    onSeriesRename: (String) -> Unit,
+    onSeriesManage: (bookUrls: Set<String>) -> Unit,
+    onSeriesDissolve: (seriesName: String, memberCount: Int) -> Unit,
+    onSeriesSetCover: (seriesName: String, cover: String?) -> Unit,
+    onSeriesExpandChange: (String?) -> Unit,
     /** 点击处于脱敏状态的私密书籍：请求验证，验证通过后自动打开阅读 */
     onLockedBookClick: (String) -> Unit = {},
     isCurrentPage: Boolean = true,

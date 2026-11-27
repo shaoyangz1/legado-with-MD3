@@ -340,6 +340,7 @@ object VideoPlay : CoroutineScope by MainScope() {
         intro: String? = null,
         coverUrl: String? = null,
     ) {
+        val mediaUrl = NetworkUtils.normalizeMediaUrl(url)
         singleUrl = true
         book = null
         bookSource = null
@@ -349,7 +350,7 @@ object VideoPlay : CoroutineScope by MainScope() {
         chapter = null
         videoTitle = title
         sessionCoverUrl = coverUrl
-        playUrl = url
+        playUrl = mediaUrl
         danmaku = null
         durChapterPos = withContext(Dispatchers.IO) {
             CacheManager.getInt(VIDEO_POS_PREFIX + mediaUrl) ?: 0

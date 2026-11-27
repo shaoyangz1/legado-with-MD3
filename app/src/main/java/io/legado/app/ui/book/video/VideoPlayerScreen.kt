@@ -128,8 +128,9 @@ import io.legado.app.ui.widget.components.icon.AppIcon
 import io.legado.app.ui.widget.components.icon.AppIcons
 import io.legado.app.ui.widget.components.image.cover.CoilBookCover
 import io.legado.app.ui.widget.components.image.cover.cachedCoverAspectRatio
-import io.legado.app.ui.widget.components.menuItem.RoundDropdownMenu
-import io.legado.app.ui.widget.components.menuItem.RoundDropdownMenuItem
+import io.legado.app.ui.widget.components.menu.AppAction
+import io.legado.app.ui.widget.components.menu.AppActionGroup
+import io.legado.app.ui.widget.components.menu.AppActionMenu
 import io.legado.app.ui.widget.components.modalBottomSheet.AppModalBottomSheet
 import io.legado.app.ui.widget.components.modalBottomSheet.SheetAction
 import io.legado.app.ui.widget.components.player.AnimatedPlayPauseButton
@@ -918,6 +919,9 @@ private fun openExternalPlayer(
 
 /** 播放页顶栏菜单的稳定 ID：声明与分派共用，避免字面量漂移。 */
 private enum class VideoMenuAction(val id: String, @StringRes val labelRes: Int) {
+    DownloadVideo("download_video", R.string.video_download),
+    CopyMagnetLink("copy_magnet_link", R.string.magnet_player_copy),
+    KeepMagnetService("keep_magnet_service", R.string.video_keep_magnet_service),
     CopyPlayUrl("copy_play_url", R.string.copy_play_url),
     OpenExternalPlayer("open_external_player", R.string.open_other_video_player),
     ToggleFloating("toggle_floating", R.string.video_floating),
@@ -934,6 +938,9 @@ private fun videoMenuActionFor(
     onIntent: (VideoPlayerIntent) -> Unit,
 ) {
     when (id) {
+        VideoMenuAction.DownloadVideo.id -> onIntent(VideoPlayerIntent.DownloadVideo)
+        VideoMenuAction.CopyMagnetLink.id -> onIntent(VideoPlayerIntent.CopyMagnetLink)
+        VideoMenuAction.KeepMagnetService.id -> onIntent(VideoPlayerIntent.ToggleKeepMagnetService)
         VideoMenuAction.CopyPlayUrl.id -> onIntent(VideoPlayerIntent.CopyPlayUrl)
         VideoMenuAction.OpenExternalPlayer.id -> onIntent(VideoPlayerIntent.OpenInExternalPlayer)
         VideoMenuAction.ToggleFloating.id -> onIntent(VideoPlayerIntent.ToggleFloating)
@@ -950,9 +957,13 @@ private fun videoMenuGroups(
     hasSource: Boolean,
     hasSourceLogin: Boolean,
     hasCustomButton: Boolean,
+    magnetSession: Boolean,
+    keepMagnetService: Boolean,
 ): ImmutableList<AppActionGroup> {
     val actions = VideoMenuAction.entries.mapNotNull { action ->
         val visible = when (action) {
+            VideoMenuAction.DownloadVideo, VideoMenuAction.CopyMagnetLink,
+            VideoMenuAction.KeepMagnetService -> magnetSession
             VideoMenuAction.CustomButton -> hasCustomButton
             VideoMenuAction.SourceLogin -> hasSourceLogin
             VideoMenuAction.EditSource -> hasSource
@@ -962,6 +973,7 @@ private fun videoMenuGroups(
         AppAction(
             id = action.id,
             label = stringResource(action.labelRes),
+            checked = if (action == VideoMenuAction.KeepMagnetService) keepMagnetService else null,
             icon = when (action) {
                 VideoMenuAction.ToggleFloating -> AppIcons.MiniWindow
                 VideoMenuAction.PictureInPicture -> AppIcons.PictureInPicture
@@ -1031,122 +1043,13 @@ private fun VideoTopBar(
             // 播放页的 menuExpanded 还要驱动「播放时自动隐藏控制栏」，开合必须由页面持有：
             // 受控模式下入口只渲染弹层，触发按钮与锚点仍是上面这颗 OverlayIconButton。
             AppActionMenu(
-                groups = videoMenuGroups(hasSource, hasSourceLogin, hasCustomButton),
+                groups = videoMenuGroups(hasSource, hasSourceLogin, hasCustomButton, magnetSession, keepMagnetService),
                 onAction = { id -> videoMenuActionFor(id, onPip, onIntent) },
                 modifier = Modifier.matchParentSize(),
                 embeddedExpanded = menuExpanded,
                 onDismissRequest = onMenuDismiss,
-            ) { dismiss ->
-                if (magnetSession) {
-                    RoundDropdownMenuItem(
-                        text = stringResource(R.string.video_download),
-                        onClick = {
-                            dismiss()
-                            onIntent(VideoPlayerIntent.DownloadVideo)
-                        },
-                    )
-                }
-                RoundDropdownMenuItem(
-                    text = stringResource(R.string.copy_play_url),
-                    onClick = {
-                        dismiss()
-                        onIntent(VideoPlayerIntent.CopyPlayUrl)
-                    },
-                )
-                RoundDropdownMenuItem(
-                    text = stringResource(R.string.open_other_video_player),
-                    onClick = {
-                        dismiss()
-                        onIntent(VideoPlayerIntent.OpenInExternalPlayer)
-                    },
-                )
-                RoundDropdownMenuItem(
-                    text = stringResource(R.string.video_floating),
-                    onClick = {
-                        dismiss()
-                        onIntent(VideoPlayerIntent.ToggleFloating)
-                    },
-                    leadingIcon = {
-                        AppIcon(
-                            imageVector = AppIcons.MiniWindow,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp),
-                        )
-                    },
-                )
-                RoundDropdownMenuItem(
-                    text = stringResource(R.string.video_picture_in_picture),
-                    onClick = {
-                        dismiss()
-                        onPip()
-                    },
-                    leadingIcon = {
-                        AppIcon(
-                            imageVector = AppIcons.PictureInPicture,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp),
-                        )
-                    },
-                )
-                if (magnetSession) {
-                    RoundDropdownMenuItem(
-                        text = stringResource(R.string.magnet_player_copy),
-                        onClick = {
-                            dismiss()
-                            onIntent(VideoPlayerIntent.CopyMagnetLink)
-                        },
-                    )
-                    RoundDropdownMenuItem(
-                        text = stringResource(R.string.video_keep_magnet_service),
-                        isSelected = keepMagnetService,
-                        onClick = {
-                            dismiss()
-                            onIntent(VideoPlayerIntent.ToggleKeepMagnetService)
-                        },
-                    )
-                }
-                RoundDropdownMenuItem(
-                    text = stringResource(R.string.config_settings),
-                    onClick = {
-                        dismiss()
-                        onIntent(VideoPlayerIntent.OpenSheet(VideoPlayerSheet.SETTINGS))
-                    },
-                    leadingIcon = {
-                        AppIcon(
-                            imageVector = AppIcons.Settings,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp),
-                        )
-                    },
-                )
-                if (hasCustomButton) {
-                    RoundDropdownMenuItem(
-                        text = stringResource(R.string.custom_button),
-                        onClick = {
-                            dismiss()
-                            onIntent(VideoPlayerIntent.RunCustomButton)
-                        },
-                    )
-                }
-                if (hasSourceLogin) {
-                    RoundDropdownMenuItem(
-                        text = stringResource(R.string.book_source_login),
-                        onClick = {
-                            dismiss()
-                            onIntent(VideoPlayerIntent.OpenSourceLogin)
-                        },
-                    )
-                }
-                if (hasSource) {
-                    RoundDropdownMenuItem(
-                        text = stringResource(R.string.edit_book_source),
-                        onClick = {
-                            dismiss()
-                            onIntent(VideoPlayerIntent.OpenSourceEdit)
-                        },
-                    )
-                }
-            }
+                trigger = {},
+            )
         }
         }
         // 全屏才需要锁手势：放在返回键下方并留出间距，避免误触
